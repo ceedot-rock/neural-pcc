@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 #include "npcc.h"
+#include "riser.h"
 
 #include <errno.h>
 #include <netinet/in.h>
@@ -86,6 +87,34 @@ static int cmd_cd(int compress, int argc, char **argv) {
     return rc ? 1 : 0;
 }
 
+static int cmd_riser(int build, int argc, char **argv) {
+    if (argc < 1) return 2;
+    uint8_t *in = NULL;
+    size_t n = 0;
+    int rc = read_all(argv[0], &in, &n);
+    if (rc) {
+        fprintf(stderr, "read: %s\n", npcc_strerror(rc));
+        return 1;
+    }
+    uint8_t *out = NULL;
+    size_t on = 0;
+    if (build)
+        rc = aip_quik_build(in, n, &out, &on);
+    else
+        rc = aip_neat_destruct(in, n, &out, &on);
+    free(in);
+    if (rc) {
+        fprintf(stderr, "aip %s rc=%d\n", build ? "quik.build" : "neat.destruct", rc);
+        return 1;
+    }
+    if (argc >= 2)
+        rc = write_all(argv[1], out, on);
+    else if (fwrite(out, 1, on, stdout) != on)
+        rc = NPCC_ERR_IO;
+    free(out);
+    return rc ? 1 : 0;
+}
+
 static int cmd_bench(int argc, char **argv) {
     if (argc < 1) return 2;
     uint8_t *in = NULL;
@@ -95,8 +124,30 @@ static int cmd_bench(int argc, char **argv) {
         fprintf(stderr, "read: %s\n", npcc_strerror(rc));
         return 1;
     }
-    NpccBudget b;
     const char *mode = argc >= 2 ? argv[1] : "full";
+    if (!strcmp(mode, "riser")) {
+        uint8_t *c = NULL, *y = NULL;
+        size_t cn = 0, yn = 0;
+        double t0 = now_s();
+        rc = aip_quik_build(in, n, &c, &cn);
+        double enc = now_s() - t0;
+        if (rc) {
+            fprintf(stderr, "quik.build fail\n");
+            free(in);
+            return 1;
+        }
+        t0 = now_s();
+        rc = aip_neat_destruct(c, cn, &y, &yn);
+        double dec = now_s() - t0;
+        int ok = rc == 0 && yn == n && memcmp(y, in, n) == 0;
+        printf("%s raw=%zu packed=%zu path=AIP kind=%u enc=%.3fs dec=%.3fs ok=%s\n",
+               argv[0], n, cn, c ? (unsigned)c[5] : 0, enc, dec, ok ? "true" : "false");
+        free(in);
+        free(c);
+        free(y);
+        return ok ? 0 : 1;
+    }
+    NpccBudget b;
     if (!strcmp(mode, "classical"))
         npcc_budget_classical(&b);
     else if (!strcmp(mode, "ar"))
@@ -229,6 +280,24 @@ static int cmd_serve(const char *host, int port) {
             else
                 http_send(c, 200, "application/octet-stream", out, on);
             free(out);
+        } else if (!strcmp(method, "POST") && !strncmp(path, "/api/quik", 9)) {
+            uint8_t *out = NULL;
+            size_t on = 0;
+            int rc = aip_quik_build(body ? body : (uint8_t *)"", have, &out, &on);
+            if (rc)
+                http_send(c, 400, "text/plain", (const uint8_t *)"quik.build fail", 15);
+            else
+                http_send(c, 200, "application/octet-stream", out, on);
+            free(out);
+        } else if (!strcmp(method, "POST") && !strncmp(path, "/api/neat", 9)) {
+            uint8_t *out = NULL;
+            size_t on = 0;
+            int rc = aip_neat_destruct(body ? body : (uint8_t *)"", have, &out, &on);
+            if (rc)
+                http_send(c, 400, "text/plain", (const uint8_t *)"neat.destruct fail", 18);
+            else
+                http_send(c, 200, "application/octet-stream", out, on);
+            free(out);
         } else
             http_send(c, 404, "text/plain", (const uint8_t *)"not found", 9);
         free(body);
@@ -239,7 +308,8 @@ static int cmd_serve(const char *host, int port) {
 static void usage(void) {
     fprintf(stderr,
             "usage: npcc c|d INPUT [OUTPUT]\n"
-            "       npcc bench INPUT [full|ar|classical]\n"
+            "       npcc quik|neat INPUT [OUTPUT]\n"
+            "       npcc bench INPUT [full|ar|classical|riser]\n"
             "       npcc serve [host] [port]\n");
 }
 
@@ -250,6 +320,10 @@ int main(int argc, char **argv) {
     }
     if (!strcmp(argv[1], "c")) return cmd_cd(1, argc - 2, argv + 2);
     if (!strcmp(argv[1], "d")) return cmd_cd(0, argc - 2, argv + 2);
+    if (!strcmp(argv[1], "quik") || !strcmp(argv[1], "build"))
+        return cmd_riser(1, argc - 2, argv + 2);
+    if (!strcmp(argv[1], "neat") || !strcmp(argv[1], "destruct"))
+        return cmd_riser(0, argc - 2, argv + 2);
     if (!strcmp(argv[1], "bench")) return cmd_bench(argc - 2, argv + 2);
     if (!strcmp(argv[1], "serve")) {
         const char *host = argc > 2 ? argv[2] : "127.0.0.1";
