@@ -24,5 +24,7 @@ Silesia snapshots (DECODE_OK, C engine, not official 12-file):
 
 | file | raw | TNSSRC | gzip-9 | PCC pcc-0.12.1 |
 |---|---:|---:|---:|---:|
-| xml | 5,345,280 | 1,205,340 | 662,284 | 443,165 |
-| dickens | 10,192,446 | 4,403,802 | 3,851,823 | 2,738,073 |
+| xml | 5,345,280 | **594,574** | 662,284 | 443,165 |
+| dickens | 10,192,446 | **3,786,706** | 3,851,823 | 2,738,073 |
+
+TNSSRC now **beats gzip-9** on both. PCC/champ still ahead. MATCH emits copies (len,dist) + FastCM on literals.
