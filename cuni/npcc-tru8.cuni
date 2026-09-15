@@ -1,0 +1,59 @@
+# TRU8 constant-byte fill. Encode stores one byte and n. Decode restores n copies.
+# Payload is 10 when that does not expand.
+
+def packed_tru8(n: int) -> int do
+    if n <= 0 do
+        ret 0
+    end
+    if n < 10 do
+        ret n
+    end
+    ret 10
+end
+
+def decode_len(n: int) -> int do
+    ret n
+end
+
+def decode_sum(b: int, n: int) -> int do
+    mut s = 0
+    mut i = 0
+    whl i < n do
+        s = s + b
+        i = i + 1
+    end
+    ret s
+end
+
+def decode_byte(b: int, n: int, i: int) -> int do
+    if i < 0 do
+        ret 0
+    end
+    if i >= n do
+        ret 0
+    end
+    ret b
+end
+
+def roundtrip(b: int, n: int) -> int do
+    if decode_len(n) != n do
+        ret 0
+    end
+    mut i = 0
+    whl i < n do
+        if decode_byte(b, n, i) != b do
+            ret 0
+        end
+        i = i + 1
+    end
+    ret 1
+end
+
+say(packed_tru8(0))
+say(packed_tru8(9))
+say(packed_tru8(10))
+say(packed_tru8(2000))
+say(decode_byte(65, 500, 0))
+say(decode_byte(65, 500, 499))
+say(decode_sum(65, 500))
+say(roundtrip(0, 2000))

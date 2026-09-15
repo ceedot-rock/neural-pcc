@@ -1,0 +1,81 @@
+# ZECK. Encode n as Zeckendorf (no two consecutive Fibonaccis). Decode sums them.
+# Fib seed 1, 2 as in neural-pcc. n=0 is the empty packing.
+
+def largest_fib_le(n: int) -> int do
+    if n <= 0 do
+        ret 0
+    end
+    if n == 1 do
+        ret 1
+    end
+    mut a = 1
+    mut b = 2
+    mut c = 0
+    whl b <= n do
+        c = a + b
+        a = b
+        b = c
+    end
+    ret a
+end
+
+def zeck_restore(n: int) -> int do
+    mut rest = n
+    mut acc = 0
+    mut f = 0
+    whl rest > 0 do
+        f = largest_fib_le(rest)
+        acc = acc + f
+        rest = rest - f
+    end
+    ret acc
+end
+
+def roundtrip(n: int) -> int do
+    if zeck_restore(n) != n do
+        ret 0
+    end
+    ret 1
+end
+
+# fibs_upto length: [1,2] then while last < n append.
+def zeck_bitcount(n: int) -> int do
+    if n <= 0 do
+        ret 0
+    end
+    mut a = 1
+    mut b = 2
+    mut k = 2
+    mut c = 0
+    whl b < n do
+        c = a + b
+        a = b
+        b = c
+        k = k + 1
+    end
+    ret k
+end
+
+def packed_zeck(n: int) -> int do
+    if n <= 0 do
+        ret 1
+    end
+    let bits = zeck_bitcount(n)
+    mut bytes = bits / 8
+    if bits % 8 != 0 do
+        bytes = bytes + 1
+    end
+    ret 4 + bytes
+end
+
+say(largest_fib_le(1))
+say(largest_fib_le(3))
+say(zeck_restore(0))
+say(zeck_restore(12))
+say(zeck_restore(100))
+say(roundtrip(0))
+say(roundtrip(1))
+say(roundtrip(12))
+say(roundtrip(1000))
+say(zeck_bitcount(3))
+say(packed_zeck(0))

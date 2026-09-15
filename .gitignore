@@ -1,0 +1,7 @@
+bin/
+src/*.o
+src/cuni_emit/*.bin
+tests/test_npcc
+__pycache__/
+*.pyc
+bench/*.json

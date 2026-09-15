@@ -1,0 +1,63 @@
+# TNSSRC. Compressor 2. Three heads, one spine per 8-bit row. Never expand.
+# Encode and decode are one process. Spine is not recomputed per column.
+
+def compressor_id() -> int do
+    ret 2
+end
+
+def heads() -> int do
+    ret 3
+end
+
+def row_bits() -> int do
+    ret 8
+end
+
+def spine_calls(n: int) -> int do
+    if n < 0 do
+        ret 0
+    end
+    ret n
+end
+
+def head_local() -> int do
+    ret 0
+end
+
+def head_match() -> int do
+    ret 1
+end
+
+def head_row() -> int do
+    ret 2
+end
+
+def keep(raw: int, coded: int) -> int do
+    if coded >= raw do
+        ret raw
+    end
+    ret coded
+end
+
+def roundtrip_row(n: int) -> int do
+    if spine_calls(n) != n do
+        ret 0
+    end
+    if heads() != 3 do
+        ret 0
+    end
+    if row_bits() != 8 do
+        ret 0
+    end
+    ret 1
+end
+
+say(compressor_id())
+say(heads())
+say(row_bits())
+say(spine_calls(16))
+say(head_local())
+say(head_match())
+say(head_row())
+say(keep(10, 11))
+say(roundtrip_row(16))

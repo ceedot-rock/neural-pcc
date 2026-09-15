@@ -1,0 +1,92 @@
+# Neural-PCC pathway ids and priorities. Encode/decode one process.
+# Same numbers as neural-pcc PATHWAY / PRIORITY. Unknown id is not a gene.
+
+def path_raw() -> int do
+    ret 0
+end
+
+def path_tru8() -> int do
+    ret 1
+end
+
+def path_zeck() -> int do
+    ret 2
+end
+
+def path_lzcm() -> int do
+    ret 3
+end
+
+def path_neural_ar() -> int do
+    ret 4
+end
+
+def path_neural_prog() -> int do
+    ret 5
+end
+
+def pri_neural_prog() -> int do
+    ret 0
+end
+
+def pri_neural_ar() -> int do
+    ret 1
+end
+
+def pri_tru8() -> int do
+    ret 2
+end
+
+def pri_zeck() -> int do
+    ret 3
+end
+
+def pri_lzcm() -> int do
+    ret 4
+end
+
+def pri_raw() -> int do
+    ret 255
+end
+
+def known(pid: int) -> int do
+    if pid < 0 do
+        ret 0
+    end
+    if pid > 5 do
+        ret 0
+    end
+    ret 1
+end
+
+def pri_of(pid: int) -> int do
+    if pid == 5 do
+        ret 0
+    end
+    if pid == 4 do
+        ret 1
+    end
+    if pid == 1 do
+        ret 2
+    end
+    if pid == 2 do
+        ret 3
+    end
+    if pid == 3 do
+        ret 4
+    end
+    ret 255
+end
+
+say(path_raw())
+say(path_tru8())
+say(path_zeck())
+say(path_lzcm())
+say(path_neural_ar())
+say(path_neural_prog())
+say(pri_of(5))
+say(pri_of(1))
+say(pri_of(0))
+say(known(0))
+say(known(5))
+say(known(6))

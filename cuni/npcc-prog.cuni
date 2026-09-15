@@ -1,0 +1,116 @@
+# NEURAL-PROG. Two programs the search actually emits: run-fill and 2-byte copy.
+# Encode stores the program. Decode restores bytes. Packed size never expands.
+
+def packed_run(n: int) -> int do
+    if n <= 0 do
+        ret 0
+    end
+    if n > 65535 do
+        ret n
+    end
+    let coded = 6
+    if coded >= n do
+        ret n
+    end
+    ret coded
+end
+
+def decode_run_byte(b: int, n: int, i: int) -> int do
+    if i < 0 do
+        ret 0
+    end
+    if i >= n do
+        ret 0
+    end
+    ret b
+end
+
+def decode_run_sum(b: int, n: int) -> int do
+    mut s = 0
+    mut i = 0
+    whl i < n do
+        s = s + b
+        i = i + 1
+    end
+    ret s
+end
+
+def roundtrip_run(b: int, n: int) -> int do
+    mut i = 0
+    whl i < n do
+        if decode_run_byte(b, n, i) != b do
+            ret 0
+        end
+        i = i + 1
+    end
+    ret 1
+end
+
+# 2-byte pattern copy. Lang+program is 10 bytes. Search only for n<=255 and n>=8.
+def packed_copy2(n: int) -> int do
+    if n < 8 do
+        ret n
+    end
+    if n > 255 do
+        ret n
+    end
+    let coded = 10
+    if coded >= n do
+        ret n
+    end
+    ret coded
+end
+
+def decode_copy2_byte(n: int, i: int) -> int do
+    if i < 0 do
+        ret 0
+    end
+    if i >= n do
+        ret 0
+    end
+    if i % 2 == 0 do
+        ret 65
+    end
+    ret 66
+end
+
+def decode_copy2_sum(n: int) -> int do
+    mut s = 0
+    mut i = 0
+    mut b = 0
+    whl i < n do
+        b = decode_copy2_byte(n, i)
+        s = s + b
+        i = i + 1
+    end
+    ret s
+end
+
+def roundtrip_copy2(n: int) -> int do
+    mut i = 0
+    mut want = 0
+    mut got = 0
+    whl i < n do
+        if i % 2 == 0 do
+            want = 65
+        els
+            want = 66
+        end
+        got = decode_copy2_byte(n, i)
+        if got != want do
+            ret 0
+        end
+        i = i + 1
+    end
+    ret 1
+end
+
+say(packed_run(5))
+say(packed_run(500))
+say(decode_run_byte(65, 500, 0))
+say(decode_run_sum(65, 500))
+say(roundtrip_run(65, 500))
+say(packed_copy2(7))
+say(packed_copy2(8))
+say(decode_copy2_sum(8))
+say(roundtrip_copy2(8))

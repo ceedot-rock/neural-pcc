@@ -1,0 +1,142 @@
+# Neural-PCC selector. Never expand vs raw. Shortest coded wins. Ties by priority.
+# Priority: PROG 0, AR 1, TRU8 2, ZECK 3, LZCM 4, RAW 255.
+
+def keep(raw: int, coded: int) -> int do
+    if coded >= raw do
+        ret raw
+    end
+    ret coded
+end
+
+def path_raw() -> int do
+    ret 0
+end
+
+def path_tru8() -> int do
+    ret 1
+end
+
+def path_zeck() -> int do
+    ret 2
+end
+
+def path_lzcm() -> int do
+    ret 3
+end
+
+def path_ar() -> int do
+    ret 4
+end
+
+def path_prog() -> int do
+    ret 5
+end
+
+# packed sizes in: prog, ar, tru8, zeck, lz. Returns pathway id.
+def pick(raw: int, c_prog: int, c_ar: int, c_tru8: int, c_zeck: int, c_lz: int) -> int do
+    mut best_len = raw
+    mut best_pri = 255
+    mut best_id = 0
+    if c_prog < raw do
+        if c_prog < best_len do
+            best_len = c_prog
+            best_pri = 0
+            best_id = 5
+        els
+            if c_prog == best_len do
+                if 0 < best_pri do
+                    best_len = c_prog
+                    best_pri = 0
+                    best_id = 5
+                end
+            end
+        end
+    end
+    if c_ar < raw do
+        if c_ar < best_len do
+            best_len = c_ar
+            best_pri = 1
+            best_id = 4
+        els
+            if c_ar == best_len do
+                if 1 < best_pri do
+                    best_len = c_ar
+                    best_pri = 1
+                    best_id = 4
+                end
+            end
+        end
+    end
+    if c_tru8 < raw do
+        if c_tru8 < best_len do
+            best_len = c_tru8
+            best_pri = 2
+            best_id = 1
+        els
+            if c_tru8 == best_len do
+                if 2 < best_pri do
+                    best_len = c_tru8
+                    best_pri = 2
+                    best_id = 1
+                end
+            end
+        end
+    end
+    if c_zeck < raw do
+        if c_zeck < best_len do
+            best_len = c_zeck
+            best_pri = 3
+            best_id = 2
+        els
+            if c_zeck == best_len do
+                if 3 < best_pri do
+                    best_len = c_zeck
+                    best_pri = 3
+                    best_id = 2
+                end
+            end
+        end
+    end
+    if c_lz < raw do
+        if c_lz < best_len do
+            best_len = c_lz
+            best_pri = 4
+            best_id = 3
+        els
+            if c_lz == best_len do
+                if 4 < best_pri do
+                    best_len = c_lz
+                    best_pri = 4
+                    best_id = 3
+                end
+            end
+        end
+    end
+    ret best_id
+end
+
+def roundtrip_keep(raw: int, coded: int) -> int do
+    let got = keep(raw, coded)
+    if coded >= raw do
+        if got != raw do
+            ret 0
+        end
+        ret 1
+    end
+    if got != coded do
+        ret 0
+    end
+    ret 1
+end
+
+# 500-byte constant: prog 24 beats tru8 30.
+# 2000 zeros: zeck 19 beats tru8 30.
+# 256 incompressible: all coded >= raw → RAW.
+say(keep(7, 8))
+say(keep(9, 8))
+say(pick(500, 24, 400, 30, 400, 400))
+say(pick(2000, 400, 400, 30, 19, 400))
+say(pick(256, 300, 300, 300, 300, 300))
+say(pick(100, 40, 40, 50, 50, 50))
+say(roundtrip_keep(16, 8))
+say(roundtrip_keep(10, 11))
