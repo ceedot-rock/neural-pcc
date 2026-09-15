@@ -1,0 +1,47 @@
+# Neural coding riser. AIP quik.build / neat.destruct. Never expand.
+
+def compressor_id() -> int do
+    ret 6
+end
+
+def model_name() -> int do
+    ret 1
+end
+
+def hidden() -> int do
+    ret 16
+end
+
+def ctx() -> int do
+    ret 8
+end
+
+def mix_net() -> int do
+    ret 1
+end
+
+def mix_adp() -> int do
+    ret 7
+end
+
+def keep(raw: int, coded: int) -> int do
+    if coded >= raw do
+        ret raw
+    end
+    ret coded
+end
+
+def protocol_ok(magic: int) -> int do
+    if magic != 1 do
+        ret 0
+    end
+    ret 1
+end
+
+say(compressor_id())
+say(hidden())
+say(ctx())
+say(mix_net())
+say(mix_adp())
+say(keep(10, 11))
+say(protocol_ok(1))
