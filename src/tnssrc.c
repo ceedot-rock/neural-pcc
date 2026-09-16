@@ -5,6 +5,7 @@
 #include "tnssrc.h"
 #include "bwt.h"
 #include "parse_rep4.h"
+#include "lzm2.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -815,6 +816,35 @@ static int encode_lz(const uint8_t *in, size_t n, Bytes *io) {
     return rc;
 }
 
+/* Own LZMA gene. 64 MiB dict. Mode 7. */
+static int encode_lzm2_gene(const uint8_t *in, size_t n, Bytes *io) {
+    uint8_t *blob = NULL;
+    size_t bn = 0;
+    if (lzm2_encode(in, n, &blob, &bn) || !blob || !bn) {
+        free(blob);
+        return -1;
+    }
+    for (size_t i = 0; i < bn; i++)
+        if (b_push(io, blob[i])) {
+            free(blob);
+            return -1;
+        }
+    free(blob);
+    return 0;
+}
+
+static int decode_lzm2_gene(const uint8_t *in, size_t n, uint8_t *out, size_t orig) {
+    uint8_t *y = NULL;
+    size_t yn = 0;
+    if (lzm2_decode(in, n, orig, &y, &yn) || !y || yn != orig) {
+        free(y);
+        return -1;
+    }
+    memcpy(out, y, orig);
+    free(y);
+    return 0;
+}
+
 static int put_u32(Bytes *io, uint32_t v) {
     uint8_t b[4] = {(uint8_t)v, (uint8_t)(v >> 8), (uint8_t)(v >> 16), (uint8_t)(v >> 24)};
     return b_push(io, b[0]) || b_push(io, b[1]) || b_push(io, b[2]) || b_push(io, b[3]);
@@ -1071,10 +1101,11 @@ static int is_textish(const uint8_t *in, size_t n) {
 }
 
 int tnssrc_encode(const uint8_t *in, size_t n, uint8_t **out, size_t *on) {
-    Bytes lz = {0}, bw = {0}, xz = {0}, col = {0}, tr = {0};
+    Bytes lz = {0}, bw = {0}, xz = {0}, col = {0}, tr = {0}, lm = {0};
     int text = is_textish(in, n);
     int want_bwt = n >= 65536 && (text || n < 32u * 1024u * 1024u);
     int want_xz = n >= 1024 * 1024 && !text;
+    int want_lzm2 = n >= 32;
     int col_ok = 0;
     if (!text && n >= 100000) {
         unsigned ww[] = {28, 24, 20, 32};
@@ -1101,7 +1132,14 @@ int tnssrc_encode(const uint8_t *in, size_t n, uint8_t **out, size_t *on) {
         } else
             free(tc.p);
     }
-    int xz_ok = 0, lz_ok = 0, bwt_ok = 0;
+    int xz_ok = 0, lz_ok = 0, bwt_ok = 0, lm_ok = 0;
+    if (want_lzm2) {
+        lm_ok = encode_lzm2_gene(in, n, &lm) == 0;
+        if (!lm_ok) {
+            free(lm.p);
+            lm.p = NULL;
+        }
+    }
     if (want_xz) {
         xz_ok = encode_xz(in, n, &xz) == 0;
         if (!xz_ok) {
@@ -1110,7 +1148,8 @@ int tnssrc_encode(const uint8_t *in, size_t n, uint8_t **out, size_t *on) {
         }
     }
     int xz_good = xz_ok && xz.n * 100 < n * 50;
-    int want_lz = (!text || n < 65536) && !xz_good;
+    int lm_good = lm_ok && lm.n * 100 < n * 50;
+    int want_lz = (!text || n < 65536) && !xz_good && !lm_good;
     if (want_lz) {
         lz_ok = encode_lz(in, n, &lz) == 0;
         if (!lz_ok) {
@@ -1121,10 +1160,11 @@ int tnssrc_encode(const uint8_t *in, size_t n, uint8_t **out, size_t *on) {
     if (want_bwt)
         bwt_ok = encode_bwt(in, n, &bw) == 0;
     int tr_ok = tr.p && tr.n;
-    if (!lz_ok && !bwt_ok && !xz_ok && !col_ok && !tr_ok) return -1;
+    if (!lz_ok && !bwt_ok && !xz_ok && !col_ok && !tr_ok && !lm_ok) return -1;
     size_t lz_n = lz_ok ? 1 + lz.n : (size_t)-1;
     size_t bw_n = bwt_ok ? (1 + bw.n) : (size_t)-1;
     size_t xz_n = xz_ok ? 1 + xz.n : (size_t)-1;
+    size_t lm_n = lm_ok ? 1 + lm.n : (size_t)-1;
     Bytes *win;
     uint8_t mode;
     size_t total;
@@ -1158,13 +1198,23 @@ int tnssrc_encode(const uint8_t *in, size_t n, uint8_t **out, size_t *on) {
         mode = 6;
         win = &tr;
     }
+    if (lm_ok && lm_n < best) {
+        best = lm_n;
+        mode = 7;
+        win = &lm;
+    }
     if (best == (size_t)-1 || best >= n) {
         free(lz.p);
         free(bw.p);
         free(xz.p);
+        free(lm.p);
+        free(col.p);
+        free(tr.p);
         return -1;
     }
     total = best;
+    if (getenv("NPCC_VERBOSE"))
+        fprintf(stderr, "tnssrc mode=%u packed=%zu orig=%zu lzm2=%d\n", mode, total, n, lm_ok);
     if (win != &lz) {
         free(lz.p);
         lz.p = NULL;
@@ -1185,10 +1235,15 @@ int tnssrc_encode(const uint8_t *in, size_t n, uint8_t **out, size_t *on) {
         free(tr.p);
         tr.p = NULL;
     }
+    if (win != &lm) {
+        free(lm.p);
+        lm.p = NULL;
+    }
     uint8_t *blob = malloc(total ? total : 1);
     if (!blob) {
         free(lz.p);
         free(bw.p);
+        free(lm.p);
         return -1;
     }
     blob[0] = mode;
@@ -1201,6 +1256,17 @@ int tnssrc_encode(const uint8_t *in, size_t n, uint8_t **out, size_t *on) {
 
 int tnssrc_decode(const uint8_t *in, size_t n, size_t orig, uint8_t **out, size_t *on) {
     if (!n) return -1;
+    if (in[0] == 7) {
+        uint8_t *y = calloc(orig ? orig : 1, 1);
+        if (!y) return -1;
+        if (decode_lzm2_gene(in + 1, n - 1, y, orig)) {
+            free(y);
+            return -1;
+        }
+        *out = y;
+        *on = orig;
+        return 0;
+    }
     if (in[0] == 6) {
         uint8_t *y = calloc(orig ? orig : 1, 1);
         if (!y) return -1;

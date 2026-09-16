@@ -2,6 +2,8 @@ bin/
 src/*.o
 src/cuni_emit/*.bin
 tests/test_npcc
+tests/test_lzm2
+tests/test_riser
 __pycache__/
 *.pyc
 bench/*.json
