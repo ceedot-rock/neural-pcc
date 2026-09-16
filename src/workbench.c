@@ -873,9 +873,15 @@ static int wb_boards(int mode, const wb_scan_t *rep) {
  * Mapping note (v3): BWT/LZM2/LZ are inner modes, not battery transforms,
  * so their scores never seat outer candidates. They are used for (a) the
  * whole-file candidate order only indirectly (outer scores seat first),
- * and (b) the hot loop's per-block fast-probe scheduling: the probe tries
- * inner modes in mixer-score order (P1: BWT first, LZM2 as a tie-break
- * probe when the top-2 BWT probes agree within 5%; see wb_route).
+ * and (b) the hot loop's per-block fast-probe scheduling. P1's probe is
+ * two-stage by design: stage 1 is always BWT (the fast discriminator;
+ * the probe ranks TRANSFORMS, not inner modes, and BWT's 3.7x speed
+ * advantage dominates), and stage 2 -- the tie-break, fired when the
+ * top-2 stage-1 probes agree within 5% -- uses the highest-scoring mixer
+ * inner mode other than BWT (usually LZM2, sometimes LZ on noise).
+ * The scores are the accuracy model; the P1 staging cost-orders them.
+ * A future time-budgeted scheduler can use these scores directly to
+ * order/truncate probe stages.
  *
  * ORDERING IS SCHEDULING ONLY. Under 2-vCPU it decides what runs first
  * while the rest queues; it NEVER eliminates a candidate and NEVER
@@ -930,7 +936,9 @@ int wb_mixer_scores(const wb_scan_t *rep, wb_mixer_score_t *out) {
     MX(0, WB_MODE_IMG2D, 0, rep->smooth16 ? 75.0 * (1.0 - h1n) : 0.0);
     MX(0, WB_MODE_BITPLANE, 0, hi_ent ? 10.0 : 20.0);
     MX(0, WB_MODE_SHUFFLE, 0, hi_ent ? 5.0 : 15.0);
-    double bwt = 58.0 * (1.0 - h1n) * (1.0 - rep->alpha_util) * (1.0 - exen);
+    double alpha_f = 1.0 - rep->alpha_util / 2.0;
+    if (alpha_f < 0.0) alpha_f = 0.0;
+    double bwt = 58.0 * (1.0 - h1n) * alpha_f * (1.0 - exen);
     MX(1, 1, 0, bwt < 0.0 ? 0.0 : bwt);
     MX(1, 7, 0, 42.0 * (1.0 - h1n / 2.0));
     MX(1, 0, 0, 30.0);
@@ -1104,6 +1112,21 @@ int wb_route(const uint8_t *in, size_t n, size_t block_size,
     if (!nblocks) return -1;
     wb_block_route_t *r = calloc(nblocks, sizeof *r);
     if (!r) return -1;
+    /* probe scheduling (v3b): stage 2 = highest-scoring mixer inner mode
+     * other than BWT (the P1 stage-1 lens). */
+    int stage2 = 7;
+    {
+        wb_mixer_score_t ims[WB_MIXER_MAX];
+        int inm = wb_mixer_scores(rep, ims);
+        double bs2 = -1.0;
+        for (int i = 0; i < inm; i++) {
+            if (!ims[i].is_inner || ims[i].mode == 1) continue;
+            if (ims[i].score > bs2) {
+                bs2 = ims[i].score;
+                stage2 = ims[i].mode;
+            }
+        }
+    }
     for (size_t b = 0; b < nblocks; b++) {
         size_t off = b * block_size;
         size_t bn = n - off > block_size ? block_size : n - off;
@@ -1171,16 +1194,19 @@ int wb_route(const uint8_t *in, size_t n, size_t block_size,
             rb->probe_bytes = (size_t)-1;
             continue;
         }
-        /* LZM2 tie-break (v3b scheduling): top-2 BWT probes within 5%,
+        /* Stage-2 tie-break (v3b scheduling): top-2 BWT probes within 5%,
          * block actually compressed, block >= 64KB. Both finalists get
-         * the LZM2 probe; the min(BWT, LZM2) wins the block. */
-        rb->lzm2_tiebreak = 0;
+         * the stage-2 probe; the min(BWT, stage2) wins the block. */
+        rb->stage2_tiebreak = 0;
+        rb->stage2_mode = stage2;
         if (bi_2nd >= 0 && rb->cand_bytes[bi_2nd] <= best + best / 20 &&
             best < bn && bn >= 65536) {
-            size_t lz0 = wb_probe_candidate_mode(cm[bi_best], cp[bi_best], blk, bn, 7);
-            size_t lz1 = wb_probe_candidate_mode(cm[bi_2nd], cp[bi_2nd], blk, bn, 7);
+            size_t lz0 =
+                wb_probe_candidate_mode(cm[bi_best], cp[bi_best], blk, bn, stage2);
+            size_t lz1 =
+                wb_probe_candidate_mode(cm[bi_2nd], cp[bi_2nd], blk, bn, stage2);
             if (lz0 != (size_t)-1 || lz1 != (size_t)-1) {
-                rb->lzm2_tiebreak = 1;
+                rb->stage2_tiebreak = 1;
                 size_t s0 = (lz0 != (size_t)-1 && lz0 < best) ? lz0 : best;
                 size_t b2 = rb->cand_bytes[bi_2nd];
                 size_t s1 = (lz1 != (size_t)-1 && lz1 < b2) ? lz1 : b2;
@@ -1228,16 +1254,18 @@ char *wb_route_audit(const char *tag, size_t block_size,
     AUD("# sicknode routing audit v1\n");
     AUD("# tag=%s block_size=%zu nblocks=%zu\n", tag ? tag : "-",
         block_size, nblocks);
-    AUD("# per-block: idx mode param probe_bytes tiebreak | cand_mode:bytes,...\n");
+    AUD("# per-block: idx mode param probe_bytes tiebreak(m2mode) | cand_mode:bytes,...\n");
     for (size_t b = 0; b < nblocks; b++) {
         const wb_block_route_t *rb = &routes[b];
         if (rb->probe_bytes == (size_t)-1)
-            AUD("%zu %s %llu X %d %d |", b, wb_mode_name(rb->mode),
-                (unsigned long long)rb->param, rb->lzm2_tiebreak, rb->ncands);
+            AUD("%zu %s %llu X %d(m%d) %d |", b, wb_mode_name(rb->mode),
+                (unsigned long long)rb->param, rb->stage2_tiebreak,
+                rb->stage2_mode, rb->ncands);
         else
-            AUD("%zu %s %llu %zu %d %d |", b, wb_mode_name(rb->mode),
+            AUD("%zu %s %llu %zu %d(m%d) %d |", b, wb_mode_name(rb->mode),
                 (unsigned long long)rb->param, rb->probe_bytes,
-                rb->lzm2_tiebreak, rb->ncands);
+                rb->stage2_tiebreak,
+                rb->stage2_mode, rb->ncands);
         for (int i = 0; i < rb->ncands; i++) {
             if (rb->cand_bytes[i] == (size_t)-1)
                 AUD(" %s:X", wb_mode_name(rb->cand_modes[i]));
@@ -1317,8 +1345,10 @@ static int wb_encode_candidate(const uint8_t *in, size_t n, int mode,
  * bare inner frame for raw blocks), so per-block decode reuses the exact
  * whole-file frame parser.
  *
- * Every block's frame must beat its block (per-block never-expand); the
- * assembled total must beat |input| (global never-expand). A block whose
+ * The assembled total must beat |input| (global never-expand); there is
+ * no per-block cap -- a block's frame is the exact inner encoding of its
+ * routed transform (raw blocks use the bare inner frame), and the routed
+ * candidate only survives when the whole assembly wins. A block whose
  * routed transform fails exact encoding fails the routed candidate: the
  * routing map is then unreliable for this input and the conductor falls
  * back to whole-file candidates. block_bytes_out (optional) receives the
@@ -1350,6 +1380,7 @@ static int wb_encode_routed_ex(const uint8_t *in, size_t n, size_t block_size,
         free(flens);
         return -1;
     }
+    if (nblocks > (SIZE_MAX - 9) / 16) return -1; /* table size overflow */
     size_t total = 9 + 16 * nblocks;
     int rc = -1;
     for (size_t b = 0; b < nblocks; b++) {
@@ -1358,8 +1389,10 @@ static int wb_encode_routed_ex(const uint8_t *in, size_t n, size_t block_size,
         if (wb_encode_candidate(in + off, bn, routes[b].mode, routes[b].param,
                                 bn, &frames[b], &flens[b]))
             goto done;
+        /* global never-expand vs |input|, overflow-safe: any total >= n
+         * fails, so the addition below cannot wrap past SIZE_MAX */
+        if (total >= n || flens[b] >= n - total) goto done;
         total += flens[b];
-        if (total >= n) goto done; /* global never-expand vs |input| */
     }
     {
         uint8_t *ob = malloc(total ? total : 1);
@@ -1412,6 +1445,12 @@ static void wb_tsv_sanitize(char *dst, size_t dn, const char *s) {
     dst[j] = 0;
 }
 
+/* Append-only Tier-3 log. Row semantics: block="whole" rows are whole-file
+ * training pairs (scan features -> exact winning transform). Numeric block
+ * rows are ROUTER training pairs: the "winner" is the router's PREDICTED
+ * transform for that block (not a per-block exact bakeoff), and
+ * packed_bytes is the exact bytes of that block's full-inner run under the
+ * predicted transform. */
 int wb_mixer_log_row(const char *file, const char *block, size_t size,
                      double entropy, double h1, double alpha_util,
                      double e8e9_per_mb, size_t period, double period_conf,
@@ -1421,11 +1460,16 @@ int wb_mixer_log_row(const char *file, const char *block, size_t size,
                      size_t packed_bytes) {
     const char *path = wb_mixer_log_path();
     FILE *f = fopen(path, "r");
-    int exists = (f != NULL);
-    if (f) fclose(f);
+    int need_header = 1;
+    if (f) {
+        /* header unless the file already has content */
+        int ch = fgetc(f);
+        if (ch != EOF) need_header = 0;
+        fclose(f);
+    }
     f = fopen(path, "a");
     if (!f) return -1;
-    if (!exists) {
+    if (need_header) {
         fprintf(f, "ts\tfile\tblock\tsize\tentropy\th1\talpha_util\t"
                    "e8e9_per_mb\tperiod\tperiod_conf\t"
                    "smooth8\tsmooth16\tsmooth24\tsmooth32\t"
@@ -1452,7 +1496,7 @@ int wb_handoff_write(const wb_handoff_t *h, char **out) {
     if (!h || !out) return -1;
     size_t cap = 2048, len = 0;
     char *buf = malloc(cap);
-    if (!buf) return NULL;
+    if (!buf) return -1;
 #define HO(...)                                                         \
     do {                                                                 \
         int need = snprintf(NULL, 0, __VA_ARGS__);                        \
@@ -1800,12 +1844,11 @@ static int wb_decode_routed(const uint8_t *in, size_t n, size_t orig,
     uint64_t nblocks64 = wb_rd32le(in + 5);
     if (bs64 == 0 || nblocks64 == 0) return -1;
     if (nblocks64 > ((uint64_t)n - 9) / 16) return -1; /* table must fit */
+    if (orig == 0) return -1;
+    /* nblocks == ceil(orig / block_size), computed without overflow */
+    if (nblocks64 != (orig - 1) / bs64 + 1) return -1;
     size_t nblocks = (size_t)nblocks64;
     size_t block_size = (size_t)bs64;
-    /* nblocks == ceil(orig / block_size) */
-    if (orig == 0) return -1;
-    if ((nblocks64 - 1) * bs64 >= orig) return -1;
-    if (nblocks64 * bs64 < orig) return -1;
     size_t taboff = 9;
     size_t framesoff = 9 + 16 * nblocks;
     uint8_t *y = malloc(orig);

@@ -1,11 +1,14 @@
 /* SickNode workbench tests: transform roundtrips, scan discovery, conductor. */
+#define _POSIX_C_SOURCE 200809L
 #include "workbench.h"
 #include "tnssrc.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
+static void wb_wr32le_fake(uint8_t *bad);
 static int fails = 0;
 #define CHECK(cond, msg) do { if (!(cond)) { printf("FAIL: %s\n", msg); fails++; } } while (0)
 
@@ -357,6 +360,262 @@ static void test_conductor(void) {
     printf("conductor tests done\n");
 }
 
+static void test_scan_v3(void) {
+    wb_scan_t rep;
+    /* text-ish: H1 well below H0, small alphabet */
+    {
+        const char *fox = "the quick brown fox jumps over the lazy dog. ";
+        size_t fl = strlen(fox), n = 131072;
+        uint8_t *t = malloc(n);
+        for (size_t i = 0; i < n; i++) t[i] = (uint8_t)fox[i % fl];
+        CHECK(wb_scan(t, n, &rep) == 0, "scanv3 text rc");
+        CHECK(rep.h1 < rep.entropy, "scanv3 h1 < entropy on text");
+        CHECK(rep.h1 > 0.0, "scanv3 h1 > 0 on text");
+        CHECK(rep.alpha_util < 0.5, "scanv3 small alphabet on text");
+        CHECK(rep.bwt_friendly == 0 || rep.bwt_friendly == 1,
+              "scanv3 bwt_friendly is a flag");
+        free(t);
+    }
+    /* noise: full alphabet, H1 ~= H0 */
+    {
+        size_t n = 70000;
+        uint8_t *nz = malloc(n);
+        for (size_t i = 0; i < n; i++) nz[i] = (uint8_t)rnd();
+        CHECK(wb_scan(nz, n, &rep) == 0, "scanv3 noise rc");
+        CHECK(rep.alpha_util > 0.99, "scanv3 full alphabet on noise");
+        CHECK(rep.h1 > rep.entropy - 0.5, "scanv3 h1 ~= entropy on noise");
+        free(nz);
+    }
+    /* u8 ramp: smooth8, not smooth16 */
+    {
+        size_t n = 70000;
+        uint8_t *r = malloc(n);
+        for (size_t i = 0; i < n; i++) r[i] = (uint8_t)(i * 3 + 7);
+        CHECK(wb_scan(r, n, &rep) == 0, "scanv3 ramp8 rc");
+        CHECK(rep.smooth8, "scanv3 smooth8 on u8 ramp");
+        free(r);
+    }
+    /* u24 ramp: smooth24 */
+    {
+        size_t n = 120000; /* %3==0, >= 2*16384*3 windows */
+        uint8_t *r = malloc(n);
+        for (size_t i = 0; i < n / 3; i++) {
+            uint32_t v = (uint32_t)(i * 5 + 1000) & 0xFFFFFFu;
+            r[3 * i] = (uint8_t)v;
+            r[3 * i + 1] = (uint8_t)(v >> 8);
+            r[3 * i + 2] = (uint8_t)(v >> 16);
+        }
+        CHECK(wb_scan(r, n, &rep) == 0, "scanv3 ramp24 rc");
+        CHECK(rep.smooth24, "scanv3 smooth24 on u24 ramp");
+        free(r);
+    }
+    /* homogeneous on uniform data (single window -> trivially true) */
+    {
+        size_t n = 300000;
+        uint8_t *u = malloc(n);
+        memset(u, 0xAB, n);
+        CHECK(wb_scan(u, n, &rep) == 0, "scanv3 uniform rc");
+        CHECK(rep.homogeneous, "scanv3 homogeneous on uniform");
+        free(u);
+    }
+    printf("scan v3 tests done\n");
+}
+
+static void test_mixer(void) {
+    wb_mixer_score_t ms[WB_MIXER_MAX];
+    /* record data: columnar must be the top-scoring OUTER transform */
+    uint8_t *rec = mk_records(28, 400);
+    wb_scan_t rep;
+    wb_scan(rec, 28 * 400, &rep);
+    int nm = wb_mixer_scores(&rep, ms);
+    CHECK(nm == 18, "mixer entry count");
+    double best_outer = -1;
+    int best_outer_mode = -1;
+    int saw_bwt = 0, saw_lzm2 = 0;
+    for (int i = 0; i < nm; i++) {
+        CHECK(ms[i].score >= 0.0 && ms[i].score <= 100.0,
+              "mixer score in [0,100]");
+        if (!ms[i].is_inner && ms[i].score > best_outer) {
+            best_outer = ms[i].score;
+            best_outer_mode = ms[i].mode;
+        }
+        if (ms[i].is_inner && ms[i].mode == 1) {
+            saw_bwt = 1;
+            CHECK(ms[i].score > 0.0, "mixer bwt scores > 0");
+        }
+        if (ms[i].is_inner && ms[i].mode == 7) saw_lzm2 = 1;
+    }
+    CHECK(best_outer_mode == WB_MODE_COLUMNAR, "mixer ranks columnar first");
+    CHECK(saw_bwt && saw_lzm2, "mixer scores inner modes");
+    free(rec);
+    /* noise: bitplane/shuffle keep low priors, nothing structural fires */
+    {
+        size_t n = 70000;
+        uint8_t *nz = malloc(n);
+        for (size_t i = 0; i < n; i++) nz[i] = (uint8_t)rnd();
+        wb_scan(nz, n, &rep);
+        nm = wb_mixer_scores(&rep, ms);
+        double bp = -1, sh = -1;
+        for (int i = 0; i < nm; i++) {
+            if (!ms[i].is_inner && ms[i].mode == WB_MODE_BITPLANE) bp = ms[i].score;
+            if (!ms[i].is_inner && ms[i].mode == WB_MODE_SHUFFLE) sh = ms[i].score;
+        }
+        CHECK(bp == 10.0 && sh == 5.0, "mixer low priors on noise");
+        free(nz);
+    }
+    printf("mixer tests done\n");
+}
+
+static void test_route(void) {
+    size_t bs = 16384, rn = 65536;
+    uint8_t *r = malloc(rn);
+    for (size_t i = 0; i < rn / 28; i++)
+        for (int c = 0; c < 28; c++)
+            r[i * 28 + c] = (c == 27) ? (uint8_t)(i & 0xFF) : (uint8_t)(c * 37);
+    wb_scan_t rep;
+    CHECK(wb_scan(r, rn, &rep) == 0, "route scan rc");
+    wb_block_route_t *routes = NULL;
+    size_t nblocks = 0;
+    CHECK(wb_route(r, rn, bs, &rep, &routes, &nblocks) == 0, "route rc");
+    CHECK(nblocks == 4, "route nblocks = ceil(n/bs)");
+    for (size_t b = 0; b < nblocks; b++) {
+        CHECK(routes[b].mode >= WB_MODE_RAW && routes[b].mode <= WB_MODE_SHUFFLE,
+              "route mode in range");
+        CHECK(routes[b].ncands >= 1, "route has candidates");
+        /* winner = min over non-failed probe bytes (ordering invariant) */
+        size_t m = (size_t)-1;
+        for (int i = 0; i < routes[b].ncands; i++)
+            if (routes[b].cand_bytes[i] != (size_t)-1 &&
+                routes[b].cand_bytes[i] < m)
+                m = routes[b].cand_bytes[i];
+        CHECK(routes[b].probe_bytes == m, "route winner is probe min");
+        CHECK(routes[b].entropy > 0.0, "route block features present");
+    }
+    char *audit = wb_route_audit("test", bs, routes, nblocks);
+    CHECK(audit != NULL, "audit non-null");
+    CHECK(!strncmp(audit, "# sicknode routing audit v1\n", 26),
+          "audit magic header");
+    CHECK(strstr(audit, "nblocks=4") != NULL, "audit nblocks");
+    free(audit);
+    /* routed encode/decode roundtrip */
+    uint8_t *enc = NULL, *dec = NULL;
+    size_t en = 0, dn = 0;
+    CHECK(wb_encode_routed(r, rn, bs, routes, nblocks, &enc, &en) == 0,
+          "routed encode rc");
+    CHECK(en > 9 && enc[0] == WB_MODE_ROUTED, "routed frame magic");
+    CHECK(wb_decode(enc, en, rn, &dec, &dn) == 0, "routed decode rc");
+    CHECK(dn == rn && memcmp(dec, r, rn) == 0, "routed roundtrip");
+    free(routes);
+    /* corrupt-frame rejection (block-table addendum) */
+    {
+        uint8_t *o = NULL;
+        size_t on = 0;
+        uint8_t *bad = malloc(en);
+        memcpy(bad, enc, en);
+        wb_wr32le_fake(bad);
+        CHECK(wb_decode(bad, en, rn, &o, &on) != 0,
+              "decode rejects bad nblocks");
+        CHECK(wb_decode(enc, 20, rn, &o, &on) != 0,
+              "decode rejects truncated routed frame");
+        CHECK(wb_decode(enc, en, rn + 1, &o, &on) != 0,
+              "decode rejects nblocks/orig mismatch");
+        /* corrupt a block offset to point outside the frame */
+        memcpy(bad, enc, en);
+        for (int i = 0; i < 8; i++) bad[9 + i] = 0xFF;
+        CHECK(wb_decode(bad, en, rn, &o, &on) != 0,
+              "decode rejects bad block offset");
+        free(bad);
+    }
+    free(enc);
+    free(dec);
+    free(r);
+    printf("route tests done\n");
+}
+
+/* test helper: overwrite the routed frame's nblocks with 0xFFFFFFFF */
+static void wb_wr32le_fake(uint8_t *bad) {
+    bad[5] = 0xFF;
+    bad[6] = 0xFF;
+    bad[7] = 0xFF;
+    bad[8] = 0xFF;
+}
+
+static void test_handoff(void) {
+    /* small input: no routing (single block), whole-file candidates only */
+    size_t nrec = 37 * 400;
+    size_t nramp = 12288;
+    size_t n = nrec + nramp;
+    uint8_t *in = malloc(n);
+    uint8_t *rec = mk_records(37, 400);
+    memcpy(in, rec, nrec);
+    free(rec);
+    for (size_t i = 0; i < nramp / 2; i++) {
+        uint16_t v = (uint16_t)((i * 5 + 1000) & 0xFFFF);
+        in[nrec + 2 * i] = (uint8_t)v;
+        in[nrec + 2 * i + 1] = (uint8_t)(v >> 8);
+    }
+    wb_result_t res;
+    CHECK(wb_encode_full(in, n, 0, &res) == 0, "handoff encode_full rc");
+    const wb_handoff_t *h = &res.handoff;
+    CHECK(h->ntried == res.nseats, "handoff tried == seats (no routing)");
+    CHECK(h->ntried >= 2, "handoff tried non-trivial");
+    CHECK(h->scan.size == n, "handoff scan size");
+    CHECK(h->routed_built == 0, "handoff no routed on single block");
+    /* incumbent = min over tried bytes */
+    size_t m = (size_t)-1;
+    for (int i = 0; i < h->ntried; i++)
+        if (h->tried[i].bytes != (size_t)-1 && h->tried[i].bytes < m)
+            m = h->tried[i].bytes;
+    CHECK(h->incumbent_bytes == m, "handoff incumbent is min tried");
+    CHECK(h->incumbent_bytes == res.on, "handoff incumbent == packed");
+    /* serialization roundtrip */
+    char *text = NULL;
+    CHECK(wb_handoff_write(h, &text) == 0, "handoff write rc");
+    CHECK(!strncmp(text, "# sicknode handoff v1\n", 20), "handoff magic");
+    wb_handoff_t h2;
+    CHECK(wb_handoff_read(text, &h2) == 0, "handoff read rc");
+    CHECK(h2.ntried == h->ntried, "handoff roundtrip ntried");
+    CHECK(h2.incumbent_bytes == h->incumbent_bytes, "handoff roundtrip bar");
+    CHECK(h2.incumbent_mode == h->incumbent_mode, "handoff roundtrip mode");
+    CHECK(h2.scan.size == h->scan.size, "handoff roundtrip scan");
+    CHECK(h2.tried[0].mode == h->tried[0].mode &&
+          h2.tried[0].bytes == h->tried[0].bytes,
+          "handoff roundtrip tried[0]");
+    free(text);
+    /* malformed inputs fail closed */
+    CHECK(wb_handoff_read("garbage", &h2) != 0, "handoff rejects garbage");
+    CHECK(wb_handoff_read("# sicknode handoff v0\n", &h2) != 0,
+          "handoff rejects bad version");
+    CHECK(wb_handoff_write(NULL, &text) != 0, "handoff write null guard");
+    wb_result_free(&res);
+    free(in);
+    printf("handoff tests done\n");
+}
+
+static void test_mixer_log(void) {
+    char path[128];
+    snprintf(path, sizeof path, "/tmp/wb_mixer_log_%d.tsv", (int)getpid());
+    unlink(path);
+    setenv("NPCC_MIXER_LOG", path, 1);
+    CHECK(wb_mixer_log_path() && !strcmp(wb_mixer_log_path(), path),
+          "mixer log path override");
+    CHECK(wb_mixer_log_row("f.bin", "whole", 100, 4.5, 3.1, 0.3, 0.0, 0,
+                           0.0, 0, 0, 0, 0, 0, 1, 1, "raw>delta8", "raw",
+                           80) == 0,
+          "mixer log row rc");
+    FILE *f = fopen(path, "r");
+    CHECK(f != NULL, "mixer log file created");
+    char hdr[256], row[1024];
+    CHECK(fgets(hdr, sizeof hdr, f) && !strncmp(hdr, "ts\tfile\tblock\t", 13),
+          "mixer log header");
+    CHECK(fgets(row, sizeof row, f) && strstr(row, "\tf.bin\twhole\t"),
+          "mixer log row content");
+    fclose(f);
+    unlink(path);
+    unsetenv("NPCC_MIXER_LOG");
+    printf("mixer log tests done\n");
+}
+
 int main(void) {
     test_columnar();
     test_delta_xor();
@@ -366,6 +625,11 @@ int main(void) {
     test_scan();
     test_bay1();
     test_conductor();
+    test_scan_v3();
+    test_mixer();
+    test_route();
+    test_handoff();
+    test_mixer_log();
     if (fails == 0) printf("workbench: all tests passed\n");
     else printf("workbench: %d FAILURES\n", fails);
     return fails ? 1 : 0;

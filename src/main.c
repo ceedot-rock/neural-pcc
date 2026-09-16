@@ -386,6 +386,7 @@ static void usage(void) {
             "       npcc wbc IN OUT        (SickNode Bay-1 encode; NPCC_WB_FULL=1 for full battery)\n"
             "       npcc wbd IN ORIG OUT   (SickNode decode)\n"
             "       npcc wbscan FILE       (SickNode structure scan report)\n"
+            "       npcc wbroute IN [AUDIT] (SickNode per-block routing audit)\n"
             "       npcc serve [host] [port]\n");
 }
 
@@ -470,12 +471,6 @@ static int cmd_wbc(int argc, char **argv) {
                          res.on))
         fprintf(stderr, "wbc: mixer log append failed\n");
     if (res.routed_built) {
-        wb_mixer_log_row(argv[0], "routed", n, rp->entropy, rp->h1,
-                         rp->alpha_util, rp->e8e9_per_mb, rp->record_period,
-                         rp->period_conf, rp->smooth8, rp->smooth16,
-                         rp->smooth24, rp->smooth32, rp->is_tar,
-                         rp->homogeneous, rp->bwt_friendly, "-", "routed",
-                         res.routed_bytes);
         for (size_t b = 0; b < res.nblocks; b++) {
             const wb_block_route_t *rb = &res.routes[b];
             char bseats[512];
@@ -506,6 +501,21 @@ static int cmd_wbc(int argc, char **argv) {
                              rp->homogeneous, rp->bwt_friendly, bseats,
                              wb_cli_winner_name(rb->mode),
                              res.routed_block_bytes[b]);
+        }
+    }
+    /* escalation handoff export (spec v4): opt-in via NPCC_WB_HANDOFF=path */
+    const char *hop = getenv("NPCC_WB_HANDOFF");
+    if (hop && *hop) {
+        char *htext = NULL;
+        if (!wb_handoff_write(&res.handoff, &htext)) {
+            FILE *hf = fopen(hop, "w");
+            if (hf) {
+                fputs(htext, hf);
+                fclose(hf);
+            } else {
+                fprintf(stderr, "wbc: cannot write handoff %s\n", hop);
+            }
+            free(htext);
         }
     }
     rc = write_all(argv[1], res.out, res.on);

@@ -66,7 +66,8 @@ typedef struct {
     int ncands;
     int cand_modes[12];
     size_t cand_bytes[12];  /* deciding probe bytes; (size_t)-1 = declined/failed */
-    int lzm2_tiebreak;      /* nonzero when the LZM2 tie-break ran */
+    int stage2_tiebreak;    /* nonzero when the stage-2 tie-break ran */
+    int stage2_mode;        /* inner mode used for the tie-break (mixer-chosen) */
     double entropy, h1;     /* per-block light features (Tier-3 logging) */
     double alpha_util;
     double e8e9_per_mb;
