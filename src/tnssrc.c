@@ -1103,11 +1103,14 @@ static int is_textish(const uint8_t *in, size_t n) {
 int tnssrc_encode(const uint8_t *in, size_t n, uint8_t **out, size_t *on) {
     Bytes lz = {0}, bw = {0}, xz = {0}, col = {0}, tr = {0}, lm = {0};
     int text = is_textish(in, n);
+    /* 48.54M Silesia 12: BWT on text and on binaries <32MiB (x-ray BWT wins). */
     int want_bwt = n >= 65536 && (text || n < 32u * 1024u * 1024u);
-    int want_xz = n >= 1024 * 1024 && !text;
-    int want_lzm2 = n >= 32;
+    /* lb champ/lzm on every binary is 15–90 min. Off unless NPCC_LB=1. */
+    int want_xz = n >= 1024 * 1024 && !text && getenv("NPCC_LB");
+    /* LZM2 on text is dominated by BWT and costs minutes per file. */
+    int want_lzm2 = n >= 32 && (!text || n < 2u * 1024u * 1024u);
     int col_ok = 0;
-    if (!text && n >= 100000) {
+    if (getenv("NPCC_COL") && !text && n >= 100000) {
         unsigned ww[] = {28, 24, 20, 32};
         for (int i = 0; i < 4; i++) {
             if (n % ww[i] != 0) continue;

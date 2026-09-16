@@ -1,4 +1,28 @@
-PROPRIETARY. All rights reserved.
-Copyright (c) 2026 Slid Phi Labs / Corey Tasz.
+TNSSRC / Neural-PCC dual license
+================================
 
-No public license. Do not copy, publish, or open-source without written permission.
+Copyright (c) 2026 Corey Tasz / Slid Phi Labs
+
+You may use this repository under either:
+
+1. GNU Affero General Public License v3.0 or later
+   https://www.gnu.org/licenses/agpl-3.0.html
+   Full text: LICENSE.AGPL-3.0
+
+2. A paid written commercial exception from Slid Phi Labs.
+   See COMMERCIAL.md and LICENSE.COMMERCIAL.
+   Contact: corey@slidphilabs.com
+   SoT: https://www.slidphilabs.com/licensing.json
+
+Default public grant is AGPL-3.0-or-later.
+Closed-source shipping, SaaS that does not offer corresponding source,
+or dropping the AGPL obligations requires the commercial grant.
+
+Compressor 2. PCC is 1. This tree is not host xz/gzip/bzip2.
+
+Legal identity
+- Trade name: Slid Phi Labs
+- Public author / copyright: Corey Tasz
+- Legal name on manuscript: Corey Robert Ptaszenski
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.

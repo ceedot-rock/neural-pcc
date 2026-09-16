@@ -1,0 +1,18 @@
+TNSSRC Silesia 12  DECODE_OK 12/12
+packed 48541366  raw 211938580
+xz-9   48795480  lead 254114
+PCC    51498645
+Do not replace with hung speed-rerun.
+
+dickens   2696613
+mozilla  13754644
+mr        2412733
+nci       1678352
+ooffice   2484820
+osdb      2611929
+reymont   1181597
+samba     4454141
+sao       4518258
+webster   8321788
+x-ray     4006977
+xml        419514
