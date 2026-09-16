@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include "npcc.h"
 #include "riser.h"
+#include "tnssrc.h"
 
 #include <errno.h>
 #include <netinet/in.h>
@@ -109,6 +110,76 @@ static int cmd_riser(int build, int argc, char **argv) {
     }
     if (argc >= 2)
         rc = write_all(argv[1], out, on);
+    else if (fwrite(out, 1, on, stdout) != on)
+        rc = NPCC_ERR_IO;
+    free(out);
+    return rc ? 1 : 0;
+}
+
+/* Temporary matrix tooling: force one inner candidate mode.
+ *   npcc force MODE INPUT [OUTPUT]  -> raw inner frame [mode u8][payload]
+ *   npcc dforce INPUT ORIG [OUTPUT]  -> decode inner frame (tnssrc_decode)
+ * Exact byte counts for the per-mode matrix; default behavior unchanged. */
+static int cmd_force(int argc, char **argv) {
+    if (argc < 2) return 2;
+    char *end = NULL;
+    long m = strtol(argv[0], &end, 10);
+    if (end == argv[0] || *end) {
+        fprintf(stderr, "force: bad mode\n");
+        return 2;
+    }
+    uint8_t *in = NULL;
+    size_t n = 0;
+    int rc = read_all(argv[1], &in, &n);
+    if (rc) {
+        fprintf(stderr, "read: %s\n", npcc_strerror(rc));
+        return 1;
+    }
+    char es[16];
+    snprintf(es, sizeof es, "%ld", m);
+    setenv("NPCC_FORCE_MODE", es, 1);
+    uint8_t *out = NULL;
+    size_t on = 0;
+    rc = tnssrc_encode(in, n, &out, &on);
+    free(in);
+    if (rc) {
+        fprintf(stderr, "force mode %ld: no candidate\n", m);
+        return 1;
+    }
+    if (argc >= 3)
+        rc = write_all(argv[2], out, on);
+    else if (fwrite(out, 1, on, stdout) != on)
+        rc = NPCC_ERR_IO;
+    fprintf(stderr, "force mode=%ld packed=%zu\n", m, on);
+    free(out);
+    return rc ? 1 : 0;
+}
+
+static int cmd_dforce(int argc, char **argv) {
+    if (argc < 2) return 2;
+    char *end = NULL;
+    unsigned long orig = strtoul(argv[1], &end, 10);
+    if (end == argv[1] || *end) {
+        fprintf(stderr, "dforce: bad orig\n");
+        return 2;
+    }
+    uint8_t *in = NULL;
+    size_t n = 0;
+    int rc = read_all(argv[0], &in, &n);
+    if (rc) {
+        fprintf(stderr, "read: %s\n", npcc_strerror(rc));
+        return 1;
+    }
+    uint8_t *out = NULL;
+    size_t on = 0;
+    rc = tnssrc_decode(in, n, (size_t)orig, &out, &on);
+    free(in);
+    if (rc) {
+        fprintf(stderr, "dforce: decode failed\n");
+        return 1;
+    }
+    if (argc >= 3)
+        rc = write_all(argv[2], out, on);
     else if (fwrite(out, 1, on, stdout) != on)
         rc = NPCC_ERR_IO;
     free(out);
@@ -325,6 +396,8 @@ int main(int argc, char **argv) {
     if (!strcmp(argv[1], "neat") || !strcmp(argv[1], "destruct"))
         return cmd_riser(0, argc - 2, argv + 2);
     if (!strcmp(argv[1], "bench")) return cmd_bench(argc - 2, argv + 2);
+    if (!strcmp(argv[1], "force")) return cmd_force(argc - 2, argv + 2);
+    if (!strcmp(argv[1], "dforce")) return cmd_dforce(argc - 2, argv + 2);
     if (!strcmp(argv[1], "serve")) {
         const char *host = argc > 2 ? argv[2] : "127.0.0.1";
         int port = argc > 3 ? atoi(argv[3]) : 8080;

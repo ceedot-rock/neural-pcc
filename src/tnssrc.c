@@ -6,6 +6,7 @@
 #include "bwt.h"
 #include "parse_rep4.h"
 #include "lzm2.h"
+#include "frontend.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -1188,14 +1189,30 @@ static int encode_blocked(const uint8_t *in, size_t n, Bytes *io) {
    + payload). There are no heuristic gates: no text detection, no size
    thresholds, no "<50% implies skip this candidate" shortcuts. A candidate
    that fails to encode is simply absent from the minimum. */
-int tnssrc_encode(const uint8_t *in, size_t n, uint8_t **out, size_t *on) {
+/* Temporary matrix tooling: NPCC_FORCE_MODE=<m> restricts the inner encoder
+   to a single candidate mode m in {0,1,3,5,6,7,8}, bypasses the front-end
+   arms, and emits the frame even if it expands (never-expand is a selector
+   policy, not a mode property). Unset = exact behavior unchanged. */
+static int force_mode(void) {
+    const char *e = getenv("NPCC_FORCE_MODE");
+    if (!e || !*e) return -1;
+    char *end = NULL;
+    long m = strtol(e, &end, 10);
+    if (end == e || *end) return -1;
+    if (m == 0 || m == 1 || m == 3 || m == 5 || m == 6 || m == 7 || m == 8)
+        return (int)m;
+    return -1;
+}
+
+int tnssrc_encode_inner(const uint8_t *in, size_t n, uint8_t **out, size_t *on) {
     Bytes lz = {0}, bw = {0}, xz = {0}, col = {0}, tr = {0}, lm = {0}, blk = {0};
-    int lz_ok = encode_lz(in, n, &lz) == 0 && lz.n > 0;
-    int bw_ok = encode_bwt(in, n, &bw) == 0 && bw.n > 0;
-    int xz_ok = encode_xz(in, n, &xz) == 0 && xz.n > 0;
-    int lm_ok = encode_lzm2_gene(in, n, &lm) == 0 && lm.n > 0;
+    int fm = force_mode();
+    int lz_ok = (fm < 0 || fm == 0) && encode_lz(in, n, &lz) == 0 && lz.n > 0;
+    int bw_ok = (fm < 0 || fm == 1) && encode_bwt(in, n, &bw) == 0 && bw.n > 0;
+    int xz_ok = (fm < 0 || fm == 3) && encode_xz(in, n, &xz) == 0 && xz.n > 0;
+    int lm_ok = (fm < 0 || fm == 7) && encode_lzm2_gene(in, n, &lm) == 0 && lm.n > 0;
     int col_ok = 0;
-    {
+    if (fm < 0 || fm == 5) {
         unsigned ww[] = {28, 24, 20, 32};
         for (int i = 0; i < 4; i++) {
             if (n % ww[i] != 0) continue;
@@ -1212,7 +1229,7 @@ int tnssrc_encode(const uint8_t *in, size_t n, uint8_t **out, size_t *on) {
         }
     }
     int tr_ok = 0;
-    if (n % 28 == 0) {
+    if ((fm < 0 || fm == 6) && n % 28 == 0) {
         Bytes tc = {0};
         if (encode_trans_bwt(in, n, 28, &tc) == 0 && tc.n > 0) {
             tr = tc;
@@ -1220,7 +1237,7 @@ int tnssrc_encode(const uint8_t *in, size_t n, uint8_t **out, size_t *on) {
         } else
             free(tc.p);
     }
-    int blk_ok = encode_blocked(in, n, &blk) == 0 && blk.n > 0;
+    int blk_ok = (fm < 0 || fm == 8) && encode_blocked(in, n, &blk) == 0 && blk.n > 0;
 
     size_t best = (size_t)-1;
     uint8_t mode = 0;
@@ -1242,7 +1259,7 @@ int tnssrc_encode(const uint8_t *in, size_t n, uint8_t **out, size_t *on) {
             win = cs[k].b;
         }
     }
-    if (!win || best >= n) {
+    if (!win || (fm < 0 && best >= n)) {
         free(lz.p);
         free(bw.p);
         free(xz.p);
@@ -1305,7 +1322,7 @@ int tnssrc_encode(const uint8_t *in, size_t n, uint8_t **out, size_t *on) {
 static int decode_blocked(const uint8_t *in, size_t n, size_t orig,
                               uint8_t **out, size_t *on);
 
-int tnssrc_decode(const uint8_t *in, size_t n, size_t orig, uint8_t **out, size_t *on) {
+int tnssrc_decode_inner(const uint8_t *in, size_t n, size_t orig, uint8_t **out, size_t *on) {
     if (!n) return -1;
     if (in[0] == 8) return decode_blocked(in + 1, n - 1, orig, out, on);
     if (in[0] == 7) {
@@ -1516,3 +1533,134 @@ static int decode_blocked(const uint8_t *in, size_t n, size_t orig, uint8_t **ou
     return 0;
 }
 
+/* ---- front-end transform arms (outer frame) ----
+ * Ported from the frontend-arms tree (commit d5d04b1), verified there at
+ * 47,214,554 bytes / -720,853 vs stock, 12/12 SHA-256 clean.
+ *
+ * Mode mapping in THIS tree: inner modes are 0/1/3/5/6/7 plus 8 = per-block
+ * exact selection, so the transform arms live at outer modes 9 (sao),
+ * 10 (d16), 11 (exe). Tries raw input plus each structurally-applicable
+ * transform (sao columnar / d16 u16-delta / exe E8-E9 normalization),
+ * running the full inner exact-minimum mode selection on each, and keeps
+ * the smallest verified output. Outer frame: [mode u8][meta_len u32 LE]
+ * [meta][inner blob]. Raw output is byte-identical to the pre-frontend
+ * (exact-selector) encoder. Never-expand: a transform is picked only when
+ * its total is < |x| (the raw input size) AND beats the raw compressed
+ * output. No file-type heuristics: every structurally-applicable transform
+ * is attempted with a real compression run; winner is the exact minimum by
+ * bytes. Structural gates live inside each apply() (sao record sniff, d16
+ * even-length>=64KiB, exe >=128 E8/E9 sites). */
+
+typedef struct {
+    int mode;
+    int (*apply)(const uint8_t *, size_t, uint8_t **, size_t *, uint8_t **, size_t *);
+} FEArm;
+
+static const FEArm FE_ARMS[] = {
+    {FE_MODE_SAO, fe_sao_apply},
+    {FE_MODE_D16, fe_d16_apply},
+    {FE_MODE_EXE, fe_exe_apply},
+};
+
+int tnssrc_encode(const uint8_t *in, size_t n, uint8_t **out, size_t *on) {
+    uint8_t *best = NULL;
+    size_t best_n = 0;
+    int have = 0;
+    /* force-mode: raw input, single inner candidate, no arms */
+    if (force_mode() >= 0) return tnssrc_encode_inner(in, n, out, on);
+    uint8_t *raw = NULL;
+    size_t raw_n = 0;
+    if (tnssrc_encode_inner(in, n, &raw, &raw_n) == 0) {
+        best = raw;
+        best_n = raw_n;
+        have = 1;
+    }
+    for (size_t a = 0; a < sizeof(FE_ARMS) / sizeof(FE_ARMS[0]); a++) {
+        uint8_t *t = NULL, *meta = NULL;
+        size_t tn = 0, mn = 0;
+        if (FE_ARMS[a].apply(in, n, &t, &tn, &meta, &mn)) continue;
+        uint8_t *ip = NULL;
+        size_t ipn = 0;
+        int ok = tn == 0 || tnssrc_encode_inner(t, tn, &ip, &ipn) != 0;
+        free(t);
+        if (ok) {
+            free(meta);
+            continue;
+        }
+        /* never expand vs |x|: total must beat the raw input size */
+        size_t total = 1 + 4 + mn + ipn;
+        if (total < n && (!have || total < best_n)) {
+            uint8_t *ob = malloc(total ? total : 1);
+            if (ob) {
+                ob[0] = (uint8_t)FE_ARMS[a].mode;
+                ob[1] = (uint8_t)mn;
+                ob[2] = (uint8_t)(mn >> 8);
+                ob[3] = (uint8_t)(mn >> 16);
+                ob[4] = (uint8_t)(mn >> 24);
+                memcpy(ob + 5, meta, mn);
+                memcpy(ob + 5 + mn, ip, ipn);
+                free(best);
+                best = ob;
+                best_n = total;
+                have = 1;
+            }
+        }
+        free(ip);
+        free(meta);
+    }
+    if (!have) return -1;
+    if (getenv("NPCC_VERBOSE"))
+        fprintf(stderr, "tnssrc outer mode=%u packed=%zu orig=%zu\n",
+                best[0], best_n, n);
+    *out = best;
+    *on = best_n;
+    return 0;
+}
+
+static int fe_invert_dispatch(int mode, const uint8_t *t, size_t tn,
+                              const uint8_t *meta, size_t mn, uint8_t *out, size_t n) {
+    switch (mode) {
+    case FE_MODE_SAO: return fe_sao_invert(t, tn, meta, mn, out, n);
+    case FE_MODE_D16: return fe_d16_invert(t, tn, meta, mn, out, n);
+    case FE_MODE_EXE: return fe_exe_invert(t, tn, meta, mn, out, n);
+    default: return -1;
+    }
+}
+
+int tnssrc_decode(const uint8_t *in, size_t n, size_t orig, uint8_t **out, size_t *on) {
+    if (n && (in[0] == FE_MODE_SAO || in[0] == FE_MODE_D16 || in[0] == FE_MODE_EXE)) {
+        int mode = in[0];
+        if (n < 13) return -1;
+        uint32_t mn = (uint32_t)in[1] | ((uint32_t)in[2] << 8) |
+                      ((uint32_t)in[3] << 16) | ((uint32_t)in[4] << 24);
+        if (mn < 8 || (size_t)mn + 5 >= n) return -1;
+        const uint8_t *meta = in + 5;
+        const uint8_t *iblob = in + 5 + mn;
+        size_t iblen = n - 5 - mn;
+        uint64_t tn = 0;
+        for (int i = 0; i < 8; i++) tn |= (uint64_t)meta[i] << (8 * i);
+        if (tn == 0 || tn > orig || iblen < 1) return -1;
+        uint8_t *t = NULL;
+        size_t tgot = 0;
+        if (tnssrc_decode_inner(iblob, iblen, (size_t)tn, &t, &tgot)) return -1;
+        if (tgot != (size_t)tn) {
+            free(t);
+            return -1;
+        }
+        uint8_t *y = malloc(orig ? orig : 1);
+        if (!y) {
+            free(t);
+            return -1;
+        }
+        int rc = fe_invert_dispatch(mode, t, (size_t)tn, meta, mn, y, orig);
+        free(t);
+        if (rc) {
+            free(y);
+            return -1;
+        }
+        *out = y;
+        *on = orig;
+        return 0;
+    }
+    return tnssrc_decode_inner(in, n, orig, out, on);
+}
