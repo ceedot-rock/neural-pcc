@@ -484,15 +484,16 @@ static void insert(const uint8_t *d, size_t n, size_t i, uint32_t *h4, uint32_t 
     }
 }
 
-static int too_far(size_t ml, uint32_t dist, int which) {
-    if (which >= 0) return 0;
+/* Lenient distance sanity caps. The DP price model makes the real
+ * keep/drop decision; these only prune hopelessly expensive pairs. */
+static int too_far(size_t ml, uint32_t dist) {
     if (ml < MIN_NEW) return 1;
-    if (ml == 3 && dist > 4096) return 1;
-    if (ml == 4 && dist > 65536u) return 1;
+    if (ml == 3 && dist > 262144u) return 1;
+    if (ml == 4 && dist > 4u * 1024u * 1024u) return 1;
     return 0;
 }
 
-#define NOPT 4096
+#define NOPT 8192
 #define PRICE_INF 0x3FFFFFFFu
 
 typedef struct {
@@ -613,12 +614,18 @@ static uint32_t lit_price(Model *m, uint8_t symbol, uint8_t prev, uint8_t match_
     return p;
 }
 
+/* Collect candidate (len,dist) pairs from both hash chains, then keep the
+ * Pareto-optimal frontier in (length, dist-slot-cost) space: a pair is
+ * dropped only if another pair is at least as long AND at least as cheap
+ * on distance. The old code kept strictly-increasing lengths, which dropped
+ * shorter matches at much cheaper distances that the DP price model prefers. */
+#define MAXCAND 96
 static int get_matches(const uint8_t *d, size_t n, size_t i, uint32_t *h4, uint32_t *p4, uint32_t *h3,
                        uint32_t *p3, size_t win, uint32_t *olens, uint32_t *odists) {
     size_t cap = MAX_LEN;
     if (n - i < cap) cap = n - i;
-    int np = 0;
-    size_t max_l = 0;
+    uint32_t cl[MAXCAND], cd[MAXCAND];
+    int nc = 0;
     if (i + 4 <= n) {
         uint32_t h = hash4(d, i);
         uint32_t p = h4[h];
@@ -628,24 +635,18 @@ static int get_matches(const uint8_t *d, size_t n, size_t i, uint32_t *h4, uint3
             if (i > j && i - j <= win) {
                 size_t l = match_len(d, j, i, cap, n);
                 uint32_t dist = (uint32_t)(i - j);
-                if (l >= 4 && l > max_l && !too_far(l, dist, -1)) {
-                    if (np < MAX_PAIRS) {
-                        olens[np] = (uint32_t)l;
-                        odists[np] = dist;
-                        np++;
-                    } else {
-                        olens[np - 1] = (uint32_t)l;
-                        odists[np - 1] = dist;
-                    }
-                    max_l = l;
-                    if (l >= cap) break;
+                if (l >= 4 && !too_far(l, dist) && nc < MAXCAND) {
+                    cl[nc] = (uint32_t)l;
+                    cd[nc] = dist;
+                    nc++;
                 }
+                if (l >= cap) break;
             }
             p = p4[j % win];
             walked++;
         }
     }
-    if (max_l < 4 && i + MIN_NEW <= n) {
+    if (i + MIN_NEW <= n) {
         uint32_t h = hash3(d, i);
         uint32_t p = h3[h];
         int walked = 0;
@@ -654,18 +655,49 @@ static int get_matches(const uint8_t *d, size_t n, size_t i, uint32_t *h4, uint3
             if (i > j && i - j <= win) {
                 size_t l = match_len(d, j, i, cap, n);
                 uint32_t dist = (uint32_t)(i - j);
-                if (l >= MIN_NEW && l > max_l && !too_far(l, dist, -1)) {
-                    if (np < MAX_PAIRS) {
-                        olens[np] = (uint32_t)l;
-                        odists[np] = dist;
-                        np++;
-                    }
-                    max_l = l;
+                if (l >= MIN_NEW && !too_far(l, dist) && nc < MAXCAND) {
+                    cl[nc] = (uint32_t)l;
+                    cd[nc] = dist;
+                    nc++;
                 }
             }
             p = p3[j % win];
             walked++;
         }
+    }
+    uint8_t keep[MAXCAND];
+    int a, b;
+    for (a = 0; a < nc; a++) keep[a] = 1;
+    for (a = 0; a < nc; a++) {
+        if (!keep[a]) continue;
+        uint32_t sa = pos_slot(cd[a]);
+        for (b = 0; b < nc; b++) {
+            if (a == b || !keep[b]) continue;
+            uint32_t sb = pos_slot(cd[b]);
+            if ((cl[b] > cl[a] && sb <= sa) || (cl[b] >= cl[a] && sb < sa)) {
+                keep[a] = 0;
+                break;
+            }
+        }
+    }
+    int np = 0;
+    for (a = 0; a < nc && np < MAX_PAIRS; a++) {
+        if (!keep[a]) continue;
+        int t = np;
+        olens[t] = cl[a];
+        odists[t] = cd[a];
+        /* Insertion sort ascending: the DP's prev_len dedup below assumes
+         * increasing length order (as the old collector produced). */
+        while (t > 0 && olens[t] < olens[t - 1]) {
+            uint32_t tl = olens[t - 1];
+            olens[t - 1] = olens[t];
+            olens[t] = tl;
+            uint32_t td = odists[t - 1];
+            odists[t - 1] = odists[t];
+            odists[t] = td;
+            t--;
+        }
+        np++;
     }
     return np;
 }
@@ -787,10 +819,11 @@ int lzm2_encode(const uint8_t *in, size_t n, uint8_t **out, size_t *on) {
                 memcpy(nr, r, 16);
                 use_rep(nr, rk);
                 uint32_t base = opt[k].price + pm1 + pr1 + price_rep_index(&m, st, rk);
-                uint32_t cand[6];
+                uint32_t cand[7];
                 int nc = 0, ci;
                 cand[nc++] = (uint32_t)Lfull;
                 if (Lfull > 2) cand[nc++] = (uint32_t)Lfull - 1;
+                if (Lfull > 3) cand[nc++] = (uint32_t)Lfull - 2;
                 if (Lfull > 4) cand[nc++] = 3;
                 if (Lfull > 8) cand[nc++] = 8;
                 if (Lfull > 16) cand[nc++] = 16;
@@ -819,10 +852,11 @@ int lzm2_encode(const uint8_t *in, size_t n, uint8_t **out, size_t *on) {
                     uint32_t nr[4];
                     memcpy(nr, r, 16);
                     shift_rep(nr, dist);
-                    uint32_t lens_try[4];
+                    uint32_t lens_try[5];
                     int ntry = 0;
                     if (L > prev_len) lens_try[ntry++] = L;
                     if (L > 1 && L - 1 > prev_len) lens_try[ntry++] = L - 1;
+                    if (L > 2 && L - 2 > prev_len) lens_try[ntry++] = L - 2;
                     {
                         int ti;
                         for (ti = 0; ti < ntry; ti++) {

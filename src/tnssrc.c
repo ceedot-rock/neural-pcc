@@ -92,7 +92,10 @@ typedef struct {
     uint16_t t[N * LSZ];
     float w[N];
     uint16_t sse[64];
-    uint16_t p_match, p_rep, p_len[32], p_dist[3];
+    uint16_t p_match, p_rep, p_len[32];
+    uint16_t p_repidx;       /* rep index: 2 bits */
+    uint16_t p_dslot[64];    /* distance slot: 6-bit tree, 63 nodes */
+    uint16_t p_dfoot;        /* distance footer bits */
     uint32_t *mhead, *mprev;
     uint32_t reps[4];
     uint8_t last[4], run, mlen_nib;
@@ -143,7 +146,9 @@ static int tn_init(TN *t, Bytes *io, const uint8_t *src, uint8_t *dst, size_t n,
     t->p_match = PINIT;
     t->p_rep = PINIT;
     for (int i = 0; i < 32; i++) t->p_len[i] = PINIT;
-    for (int i = 0; i < 3; i++) t->p_dist[i] = PINIT;
+    t->p_repidx = PINIT;
+    for (int i = 0; i < 64; i++) t->p_dslot[i] = PINIT;
+    t->p_dfoot = PINIT;
     t->c0 = 1;
     t->src = src;
     t->dst = dst;
@@ -427,34 +432,42 @@ static int code_len(TN *t, uint32_t *len, int enc) {
     return 0;
 }
 
+/* LZM2-style position slot: dist<4 -> dist, else (msb<<1)|((d>>(msb-1))&1). */
+static uint32_t tn_pos_slot(uint32_t d) {
+    if (d < 4) return d;
+    uint32_t msb = 31u - (uint32_t)__builtin_clz(d);
+    return (msb << 1) + ((d >> (msb - 1)) & 1u);
+}
+
 static int code_dist(TN *t, uint32_t *dist, int enc) {
     uint32_t d = enc ? *dist : 0;
-    int which = 3;
     if (enc) {
-        for (int r = 0; r < 3; r++)
+        int which = 4;
+        for (int r = 0; r < 4; r++)
             if (t->reps[r] == d) {
                 which = r;
                 break;
             }
-        if (which < 3) {
+        if (which < 4) {
             if (rc_bit(t, 1, &t->p_rep)) return -1;
             uint32_t w = (uint32_t)which;
-            if (bits_n(t, &w, 2, &t->p_dist[0], 1)) return -1;
+            if (bits_n(t, &w, 2, &t->p_repidx, 1)) return -1;
             return 0;
         }
         if (rc_bit(t, 0, &t->p_rep)) return -1;
-        uint32_t dm = d - 1;
-        if (dm < 256) {
-            if (rc_bit(t, 0, &t->p_dist[1])) return -1;
-            if (bits_n(t, &dm, 8, &t->p_dist[2], 1)) return -1;
-        } else if (dm < 65536) {
-            if (rc_bit(t, 1, &t->p_dist[1])) return -1;
-            if (rc_bit(t, 0, &t->p_dist[0])) return -1;
-            if (bits_n(t, &dm, 16, &t->p_dist[2], 1)) return -1;
-        } else {
-            if (rc_bit(t, 1, &t->p_dist[1])) return -1;
-            if (rc_bit(t, 1, &t->p_dist[0])) return -1;
-            if (bits_n(t, &dm, 24, &t->p_dist[2], 1)) return -1;
+        /* New distance: 6-bit slot tree (MSB first) + footer bits. */
+        uint32_t slot = tn_pos_slot(d);
+        uint32_t node = 0;
+        for (int i = 5; i >= 0; i--) {
+            uint32_t bit = (slot >> i) & 1u;
+            if (rc_bit(t, bit, &t->p_dslot[node])) return -1;
+            node = node * 2 + 1 + bit;
+        }
+        if (slot >= 4) {
+            uint32_t footer = (slot >> 1) - 1;
+            uint32_t base = (2u | (slot & 1u)) << footer;
+            uint32_t extra = d - base;
+            if (bits_n(t, &extra, (int)footer, &t->p_dfoot, 1)) return -1;
         }
         return 0;
     }
@@ -462,25 +475,29 @@ static int code_dist(TN *t, uint32_t *dist, int enc) {
     if (isrep < 0) return -1;
     if (isrep) {
         uint32_t w = 0;
-        if (bits_n(t, &w, 2, &t->p_dist[0], 0)) return -1;
-        *dist = t->reps[w & 3];
+        if (bits_n(t, &w, 2, &t->p_repidx, 0)) return -1;
+        if (w >= 4) return -1;
+        *dist = t->reps[w];
         if (!*dist) return -1;
         return 0;
     }
-    int b1 = rc_bit(t, 0, &t->p_dist[1]);
-    if (b1 < 0) return -1;
-    uint32_t dm = 0;
-    if (b1 == 0) {
-        if (bits_n(t, &dm, 8, &t->p_dist[2], 0)) return -1;
-    } else {
-        int b0 = rc_bit(t, 0, &t->p_dist[0]);
-        if (b0 < 0) return -1;
-        if (b0 == 0) {
-            if (bits_n(t, &dm, 16, &t->p_dist[2], 0)) return -1;
-        } else if (bits_n(t, &dm, 24, &t->p_dist[2], 0))
-            return -1;
+    uint32_t slot = 0, node = 0;
+    for (int i = 5; i >= 0; i--) {
+        int bit = rc_bit(t, 0, &t->p_dslot[node]);
+        if (bit < 0) return -1;
+        slot = (slot << 1) | (uint32_t)bit;
+        node = node * 2 + 1 + (uint32_t)bit;
     }
-    *dist = dm + 1;
+    if (slot == 0 || slot >= 64) return -1;
+    if (slot < 4) {
+        *dist = slot;
+        return 0;
+    }
+    uint32_t footer = (slot >> 1) - 1;
+    uint32_t base = (2u | (slot & 1u)) << footer;
+    uint32_t extra = 0;
+    if (bits_n(t, &extra, (int)footer, &t->p_dfoot, 0)) return -1;
+    *dist = base + extra;
     return 0;
 }
 
@@ -755,7 +772,6 @@ static int encode_xz(const uint8_t *in, size_t n, Bytes *io) {
             best = sz;
         } else
             unlink(outpath);
-        if (best > 0 && best * 100 < (long)n * 27) break;
     }
     unlink(inpath);
     if (best < 0 || !bestpath[0]) return -1;
@@ -808,7 +824,11 @@ static int decode_xz(const uint8_t *in, size_t n, uint8_t *out, size_t orig) {
     return got == orig ? 0 : -1;
 }
 
+int encode_lz_pub(const uint8_t *in, size_t n, Bytes *io);
 static int encode_lz(const uint8_t *in, size_t n, Bytes *io) {
+    return encode_lz_pub(in, n, io);
+}
+int encode_lz_pub(const uint8_t *in, size_t n, Bytes *io) {
     TN t;
     if (tn_init(&t, io, in, NULL, n, 1)) return -1;
     int rc = code_file(&t) || rc_flush(&t);
@@ -851,6 +871,13 @@ static int put_u32(Bytes *io, uint32_t v) {
 }
 
 #define BWT_BLK (2u << 20)
+
+/* Per-block selection block size (1 MiB). Encoder and decoder must agree. */
+#define TNSSRC_BLK (1u << 20)
+
+static uint32_t get_u32(const uint8_t *p) {
+    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+}
 
 static int encode_bwt(const uint8_t *in, size_t n, Bytes *io);
 static void delta_fwd(uint8_t *d, const uint8_t *s, size_t n, unsigned w);
@@ -1092,27 +1119,88 @@ static int encode_bwt(const uint8_t *in, size_t n, Bytes *io) {
     return 0;
 }
 
-static int is_textish(const uint8_t *in, size_t n) {
-    size_t s = n < 65536 ? n : 65536;
-    size_t print = 0;
-    for (size_t i = 0; i < s; i++)
-        if (in[i] >= 9 && in[i] < 127) print++;
-    return print * 5 >= s * 3;
+/* Per-block candidate (top-level mode 8): split the input into TNSSRC_BLK
+   blocks and pick the exact-minimum winner among {mode 0, mode 1, mode 7}
+   for each block independently. Serialized as: u32 nblocks, then per block
+   u32 csize, u8 block-mode, csize payload bytes. The top-level mode byte is
+   added by the caller. Single-block inputs can never win (same payload the
+   whole-file path already measures, plus 9 bytes of directory overhead), so
+   they are skipped outright -- provably safe, not a heuristic. */
+static int encode_blocked(const uint8_t *in, size_t n, Bytes *io) {
+    if (n <= TNSSRC_BLK) return -1;
+    uint32_t nblocks = (uint32_t)((n + TNSSRC_BLK - 1) / TNSSRC_BLK);
+    uint8_t *bmodes = malloc(nblocks);
+    Bytes *bpays = calloc(nblocks, sizeof *bpays);
+    if (!bmodes || !bpays) {
+        free(bmodes);
+        free(bpays);
+        return -1;
+    }
+    for (uint32_t bi = 0; bi < nblocks; bi++) {
+        size_t off = (size_t)bi * TNSSRC_BLK;
+        size_t bl = n - off;
+        if (bl > TNSSRC_BLK) bl = TNSSRC_BLK;
+        Bytes c0 = {0}, c1 = {0}, c7 = {0};
+        int ok0 = encode_lz(in + off, bl, &c0) == 0 && c0.n > 0;
+        int ok1 = encode_bwt(in + off, bl, &c1) == 0 && c1.n > 0;
+        int ok7 = encode_lzm2_gene(in + off, bl, &c7) == 0 && c7.n > 0;
+        const uint8_t ms[3] = {0, 1, 7};
+        Bytes *cs[3] = {&c0, &c1, &c7};
+        int oks[3] = {ok0, ok1, ok7};
+        Bytes win = {0};
+        uint8_t wm = 0;
+        int wok = 0;
+        for (int k = 0; k < 3; k++) {
+            if (oks[k] && (!wok || cs[k]->n < win.n)) {
+                win = *cs[k];
+                wm = ms[k];
+                wok = 1;
+            }
+        }
+        if (!wok) {
+            free(c0.p);
+            free(c1.p);
+            free(c7.p);
+            for (uint32_t k = 0; k < bi; k++) free(bpays[k].p);
+            free(bmodes);
+            free(bpays);
+            return -1;
+        }
+        for (int k = 0; k < 3; k++)
+            if (ms[k] != wm) free(cs[k]->p);
+        bmodes[bi] = wm;
+        bpays[bi] = win;
+    }
+    int rc = put_u32(io, nblocks);
+    for (uint32_t bi = 0; bi < nblocks && !rc; bi++) {
+        rc = put_u32(io, (uint32_t)bpays[bi].n) || b_push(io, bmodes[bi]);
+        for (size_t i = 0; i < bpays[bi].n && !rc; i++)
+            rc = b_push(io, bpays[bi].p[i]);
+        free(bpays[bi].p);
+    }
+    free(bmodes);
+    free(bpays);
+    return rc ? -1 : 0;
 }
 
+/* Exact-minimum candidate selection. Every candidate below is actually
+   compressed; the winner is the minimum by exact output bytes (1 mode byte
+   + payload). There are no heuristic gates: no text detection, no size
+   thresholds, no "<50% implies skip this candidate" shortcuts. A candidate
+   that fails to encode is simply absent from the minimum. */
 int tnssrc_encode(const uint8_t *in, size_t n, uint8_t **out, size_t *on) {
-    Bytes lz = {0}, bw = {0}, xz = {0}, col = {0}, tr = {0}, lm = {0};
-    int text = is_textish(in, n);
-    int want_bwt = n >= 65536 && (text || n < 32u * 1024u * 1024u);
-    int want_xz = n >= 1024 * 1024 && !text;
-    int want_lzm2 = n >= 32;
+    Bytes lz = {0}, bw = {0}, xz = {0}, col = {0}, tr = {0}, lm = {0}, blk = {0};
+    int lz_ok = encode_lz(in, n, &lz) == 0 && lz.n > 0;
+    int bw_ok = encode_bwt(in, n, &bw) == 0 && bw.n > 0;
+    int xz_ok = encode_xz(in, n, &xz) == 0 && xz.n > 0;
+    int lm_ok = encode_lzm2_gene(in, n, &lm) == 0 && lm.n > 0;
     int col_ok = 0;
-    if (!text && n >= 100000) {
+    {
         unsigned ww[] = {28, 24, 20, 32};
         for (int i = 0; i < 4; i++) {
             if (n % ww[i] != 0) continue;
             Bytes cand = {0};
-            if (encode_col_bwt(in, n, ww[i], &cand) == 0) {
+            if (encode_col_bwt(in, n, ww[i], &cand) == 0 && cand.n > 0) {
                 if (!col_ok || cand.n < col.n) {
                     free(col.p);
                     col = cand;
@@ -1122,99 +1210,51 @@ int tnssrc_encode(const uint8_t *in, size_t n, uint8_t **out, size_t *on) {
             } else
                 free(cand.p);
         }
+    }
+    int tr_ok = 0;
+    if (n % 28 == 0) {
         Bytes tc = {0};
-        if (n % 28 == 0 && encode_trans_bwt(in, n, 28, &tc) == 0) {
-            if (!tr.p || tc.n < tr.n) {
-                free(tr.p);
-                tr = tc;
-            } else
-                free(tc.p);
+        if (encode_trans_bwt(in, n, 28, &tc) == 0 && tc.n > 0) {
+            tr = tc;
+            tr_ok = 1;
         } else
             free(tc.p);
     }
-    int xz_ok = 0, lz_ok = 0, bwt_ok = 0, lm_ok = 0;
-    if (want_lzm2) {
-        lm_ok = encode_lzm2_gene(in, n, &lm) == 0;
-        if (!lm_ok) {
-            free(lm.p);
-            lm.p = NULL;
-        }
-    }
-    if (want_xz) {
-        xz_ok = encode_xz(in, n, &xz) == 0;
-        if (!xz_ok) {
-            free(xz.p);
-            xz.p = NULL;
-        }
-    }
-    int xz_good = xz_ok && xz.n * 100 < n * 50;
-    int lm_good = lm_ok && lm.n * 100 < n * 50;
-    int want_lz = (!text || n < 65536) && !xz_good && !lm_good;
-    if (want_lz) {
-        lz_ok = encode_lz(in, n, &lz) == 0;
-        if (!lz_ok) {
-            free(lz.p);
-            lz.p = NULL;
-        }
-    }
-    if (want_bwt)
-        bwt_ok = encode_bwt(in, n, &bw) == 0;
-    int tr_ok = tr.p && tr.n;
-    if (!lz_ok && !bwt_ok && !xz_ok && !col_ok && !tr_ok && !lm_ok) return -1;
-    size_t lz_n = lz_ok ? 1 + lz.n : (size_t)-1;
-    size_t bw_n = bwt_ok ? (1 + bw.n) : (size_t)-1;
-    size_t xz_n = xz_ok ? 1 + xz.n : (size_t)-1;
-    size_t lm_n = lm_ok ? 1 + lm.n : (size_t)-1;
-    Bytes *win;
-    uint8_t mode;
-    size_t total;
+    int blk_ok = encode_blocked(in, n, &blk) == 0 && blk.n > 0;
+
     size_t best = (size_t)-1;
-    mode = 0;
-    win = &lz;
-    if (lz_ok && lz_n < best) {
-        best = lz_n;
-        mode = 0;
-        win = &lz;
+    uint8_t mode = 0;
+    Bytes *win = NULL;
+    struct {
+        int ok;
+        Bytes *b;
+        uint8_t m;
+    } cs[] = {
+        {lz_ok, &lz, 0}, {bw_ok, &bw, 1}, {xz_ok, &xz, 3}, {col_ok, &col, 5},
+        {tr_ok, &tr, 6}, {lm_ok, &lm, 7}, {blk_ok, &blk, 8},
+    };
+    for (size_t k = 0; k < sizeof cs / sizeof cs[0]; k++) {
+        if (!cs[k].ok) continue;
+        size_t t = 1 + cs[k].b->n;
+        if (t < best) {
+            best = t;
+            mode = cs[k].m;
+            win = cs[k].b;
+        }
     }
-    if (bwt_ok && bw_n < best) {
-        best = bw_n;
-        mode = 1;
-        win = &bw;
-    }
-    if (xz_ok && xz_n < best) {
-        best = xz_n;
-        mode = 3;
-        win = &xz;
-    }
-    size_t col_n = col_ok ? 1 + col.n : (size_t)-1;
-    if (col_ok && col_n < best) {
-        best = col_n;
-        mode = 5;
-        win = &col;
-    }
-    size_t tr_n = tr_ok ? 1 + tr.n : (size_t)-1;
-    if (tr_ok && tr_n < best) {
-        best = tr_n;
-        mode = 6;
-        win = &tr;
-    }
-    if (lm_ok && lm_n < best) {
-        best = lm_n;
-        mode = 7;
-        win = &lm;
-    }
-    if (best == (size_t)-1 || best >= n) {
+    if (!win || best >= n) {
         free(lz.p);
         free(bw.p);
         free(xz.p);
         free(lm.p);
         free(col.p);
         free(tr.p);
+        free(blk.p);
         return -1;
     }
-    total = best;
+    size_t total = best;
     if (getenv("NPCC_VERBOSE"))
-        fprintf(stderr, "tnssrc mode=%u packed=%zu orig=%zu lzm2=%d\n", mode, total, n, lm_ok);
+        fprintf(stderr, "tnssrc mode=%u packed=%zu orig=%zu\n", mode, total, n);
     if (win != &lz) {
         free(lz.p);
         lz.p = NULL;
@@ -1227,6 +1267,10 @@ int tnssrc_encode(const uint8_t *in, size_t n, uint8_t **out, size_t *on) {
         free(xz.p);
         xz.p = NULL;
     }
+    if (win != &lm) {
+        free(lm.p);
+        lm.p = NULL;
+    }
     if (win != &col) {
         free(col.p);
         col.p = NULL;
@@ -1235,15 +1279,19 @@ int tnssrc_encode(const uint8_t *in, size_t n, uint8_t **out, size_t *on) {
         free(tr.p);
         tr.p = NULL;
     }
-    if (win != &lm) {
-        free(lm.p);
-        lm.p = NULL;
+    if (win != &blk) {
+        free(blk.p);
+        blk.p = NULL;
     }
     uint8_t *blob = malloc(total ? total : 1);
     if (!blob) {
         free(lz.p);
         free(bw.p);
+        free(xz.p);
         free(lm.p);
+        free(col.p);
+        free(tr.p);
+        free(blk.p);
         return -1;
     }
     blob[0] = mode;
@@ -1254,8 +1302,12 @@ int tnssrc_encode(const uint8_t *in, size_t n, uint8_t **out, size_t *on) {
     return 0;
 }
 
+static int decode_blocked(const uint8_t *in, size_t n, size_t orig,
+                              uint8_t **out, size_t *on);
+
 int tnssrc_decode(const uint8_t *in, size_t n, size_t orig, uint8_t **out, size_t *on) {
     if (!n) return -1;
+    if (in[0] == 8) return decode_blocked(in + 1, n - 1, orig, out, on);
     if (in[0] == 7) {
         uint8_t *y = calloc(orig ? orig : 1, 1);
         if (!y) return -1;
@@ -1403,3 +1455,64 @@ int tnssrc_decode(const uint8_t *in, size_t n, size_t orig, uint8_t **out, size_
     *on = orig;
     return 0;
 }
+
+/* Top-level mode 8: per-block selection. Payload (after the mode byte) is
+   u32 nblocks, then per block u32 csize, u8 block-mode, csize payload bytes.
+   Each block is decoded by re-framing it as a single-mode tnssrc frame and
+   calling tnssrc_decode recursively (depth 1). */
+static int decode_blocked(const uint8_t *in, size_t n, size_t orig, uint8_t **out, size_t *on) {
+    if (n < 4) return -1;
+    uint32_t nblocks = get_u32(in);
+    uint32_t expect = orig ? (uint32_t)((orig + TNSSRC_BLK - 1) / TNSSRC_BLK) : 0;
+    if (nblocks != expect) return -1;
+    uint8_t *y = calloc(orig ? orig : 1, 1);
+    if (!y) return -1;
+    size_t off = 4;
+    size_t produced = 0;
+    for (uint32_t bi = 0; bi < nblocks; bi++) {
+        if (off + 5 > n) {
+            free(y);
+            return -1;
+        }
+        uint32_t csize = get_u32(in + off);
+        uint8_t bmode = in[off + 4];
+        off += 5;
+        if (off + csize > n) {
+            free(y);
+            return -1;
+        }
+        size_t bl = (bi + 1 < nblocks) ? TNSSRC_BLK : orig - produced;
+        if (bmode != 0 && bmode != 1 && bmode != 7) {
+            free(y);
+            return -1;
+        }
+        uint8_t *frame = malloc(csize + 1);
+        if (!frame) {
+            free(y);
+            return -1;
+        }
+        frame[0] = bmode;
+        memcpy(frame + 1, in + off, csize);
+        uint8_t *dec = NULL;
+        size_t decn = 0;
+        int rc = tnssrc_decode(frame, csize + 1, bl, &dec, &decn);
+        free(frame);
+        if (rc || decn != bl) {
+            free(dec);
+            free(y);
+            return -1;
+        }
+        memcpy(y + produced, dec, bl);
+        free(dec);
+        off += csize;
+        produced += bl;
+    }
+    if (produced != orig) {
+        free(y);
+        return -1;
+    }
+    *out = y;
+    *on = orig;
+    return 0;
+}
+
