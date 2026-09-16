@@ -1,10 +1,15 @@
+#define _POSIX_C_SOURCE 200809L
 /* TNSSRC — copies + FastCM literals. Three heads, one spine per row.
  * MATCH emits (len,dist) copies, not 8 predicted bits. LOCAL FastCM on lits.
  * ROW record/run inside FastCM. Decoder mirrors. Proprietary Slid Phi Labs. */
 #include "tnssrc.h"
+#include "bwt.h"
+#include "parse_rep4.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #define N 8
 #define LBITS 16
@@ -12,11 +17,11 @@
 #define LMASK (LSZ - 1)
 #define HBITS 20
 #define HSZ (1u << HBITS)
-#define WIN (1u << 23)
+#define WIN (1u << 22)
 #define WMASK (WIN - 1)
-#define CHAIN 32
+#define CHAIN 128
 #define MINM 4
-#define MAXM 273
+#define MAXM 65535
 #define PINIT 1024
 #define LR 0.04f
 
@@ -498,8 +503,47 @@ static void apply_match(TN *t, size_t i, uint32_t len, uint32_t dist) {
     bump_reps(t, dist);
 }
 
+static int emit_toks(TN *t, const uint32_t *td, const uint32_t *tl, size_t nt) {
+    size_t i = 0;
+    for (size_t k = 0; k < nt; k++) {
+        if (tl[k] == 0) {
+            if (t->enc) {
+                if (rc_bit(t, 0, &t->p_match)) return -1;
+                if (enc_lit(t, (uint8_t)td[k])) return -1;
+                insert(t, i);
+            }
+            t->mlen_nib = 0;
+            i++;
+        } else {
+            uint32_t len = tl[k], dist = td[k];
+            if (t->enc) {
+                if (rc_bit(t, 1, &t->p_match)) return -1;
+                if (code_len(t, &len, 1)) return -1;
+                if (code_dist(t, &dist, 1)) return -1;
+            }
+            apply_match(t, i, len, dist);
+            i += len;
+        }
+    }
+    return i == t->nsrc ? 0 : -1;
+}
+
 static int code_file(TN *t) {
     size_t n = t->nsrc;
+    if (t->enc && n > 3 * 1024 * 1024) {
+        uint32_t *td = malloc(n * 4);
+        uint32_t *tl = malloc(n * 4);
+        size_t nt = 0;
+        uint32_t win = n > 16u * 1024u * 1024u ? (1u << 23) : (1u << 22);
+        if (td && tl && parse_rep4(t->src, n, win, td, tl, &nt) == 0) {
+            int rc = emit_toks(t, td, tl, nt);
+            free(td);
+            free(tl);
+            return rc;
+        }
+        free(td);
+        free(tl);
+    }
     size_t i = 0;
     while (i < n) {
         uint32_t len = 0, dist = 0;
@@ -508,7 +552,12 @@ static int code_file(TN *t) {
             if (len >= MINM && i + 1 + MINM <= n) {
                 uint32_t len2 = 0, dist2 = 0;
                 find_match(t, i + 1, &len2, &dist2);
-                if (len2 > len) len = 0;
+                if (len2 > len + 1) len = 0;
+                else if (i + 2 + MINM <= n) {
+                    uint32_t len3 = 0, dist3 = 0;
+                    find_match(t, i + 2, &len3, &dist3);
+                    if (len3 > len + 2) len = 0;
+                }
             }
         }
         uint32_t is_m = t->enc ? (len >= MINM) : 0;
@@ -547,38 +596,743 @@ static int code_file(TN *t) {
     return 0;
 }
 
-int tnssrc_encode(const uint8_t *in, size_t n, uint8_t **out, size_t *on) {
-    Bytes io = {0};
-    TN t;
-    if (tn_init(&t, &io, in, NULL, n, 1)) return -1;
-    if (code_file(&t) || rc_flush(&t)) {
-        tn_free(&t);
-        free(io.p);
+/* Order-1 bitwise on MTF-RLE0. Proven roundtrip. */
+typedef struct {
+    uint16_t p[65536];
+    uint64_t low, high, code;
+    Bytes *io;
+    int enc;
+} O1;
+
+static int o1_bit(O1 *o, uint32_t bit, uint16_t *pp) {
+    uint16_t p = *pp;
+    if (p < 1) p = 1;
+    if (p > 2047) p = 2047;
+    uint64_t span = o->high - o->low;
+    uint64_t mid = o->low + (span >> 11) * (uint64_t)p;
+    if (o->enc) {
+        if (bit == 0)
+            o->high = mid;
+        else
+            o->low = mid + 1;
+        for (;;) {
+            if ((o->low >> 56) != (o->high >> 56)) break;
+            if (b_push(o->io, (uint8_t)(o->low >> 56))) return -1;
+            o->low <<= 8;
+            o->high = (o->high << 8) | 0xFFu;
+        }
+        p_upd(pp, bit);
+        return 0;
+    }
+    uint32_t y = o->code <= mid ? 0 : 1;
+    if (y == 0)
+        o->high = mid;
+    else
+        o->low = mid + 1;
+    for (;;) {
+        if ((o->low >> 56) != (o->high >> 56)) break;
+        o->low <<= 8;
+        o->high = (o->high << 8) | 0xFFu;
+        o->code = (o->code << 8) | b_get(o->io);
+    }
+    p_upd(pp, y);
+    return (int)y;
+}
+
+static int o1_enc(const uint8_t *x, size_t n, Bytes *io) {
+    O1 o;
+    memset(&o, 0, sizeof o);
+    o.io = io;
+    o.enc = 1;
+    o.high = ~0ull;
+    for (int i = 0; i < 65536; i++) o.p[i] = PINIT;
+    uint8_t prev = 0, c0 = 1;
+    for (size_t i = 0; i < n; i++) {
+        uint8_t b = x[i];
+        c0 = 1;
+        for (int bp = 7; bp >= 0; bp--) {
+            uint32_t ctx = ((uint32_t)prev << 8) | c0;
+            uint32_t bit = (b >> bp) & 1;
+            if (o1_bit(&o, bit, &o.p[ctx])) return -1;
+            c0 = (uint8_t)((c0 << 1) | bit);
+        }
+        prev = b;
+    }
+    for (int i = 0; i < 8; i++) {
+        if (b_push(io, (uint8_t)(o.low >> 56))) return -1;
+        o.low <<= 8;
+    }
+    return 0;
+}
+
+static int o1_dec(Bytes *io, uint8_t *y, size_t n) {
+    O1 o;
+    memset(&o, 0, sizeof o);
+    o.io = io;
+    o.high = ~0ull;
+    for (int i = 0; i < 65536; i++) o.p[i] = PINIT;
+    o.code = 0;
+    for (int k = 0; k < 8; k++) o.code = (o.code << 8) | b_get(io);
+    uint8_t prev = 0, c0 = 1;
+    for (size_t i = 0; i < n; i++) {
+        uint8_t b = 0;
+        c0 = 1;
+        for (int bp = 7; bp >= 0; bp--) {
+            uint32_t ctx = ((uint32_t)prev << 8) | c0;
+            int bit = o1_bit(&o, 0, &o.p[ctx]);
+            if (bit < 0) return -1;
+            c0 = (uint8_t)((c0 << 1) | bit);
+            b = (uint8_t)((b << 1) | bit);
+        }
+        y[i] = b;
+        prev = b;
+    }
+    return 0;
+}
+
+static const char *find_lb(void) {
+    const char *e = getenv("LB_BIN");
+    if (e && e[0] && access(e, X_OK) == 0) return e;
+    if (access("/opt/pcc/bin/lb", X_OK) == 0) return "/opt/pcc/bin/lb";
+    if (access("/usr/local/bin/lb", X_OK) == 0) return "/usr/local/bin/lb";
+    return NULL;
+}
+
+static long file_size(const char *path) {
+    FILE *f = fopen(path, "rb");
+    if (!f) return -1;
+    if (fseek(f, 0, SEEK_END)) {
+        fclose(f);
         return -1;
     }
+    long s = ftell(f);
+    fclose(f);
+    return s;
+}
+
+static int write_all_fd(int fd, const uint8_t *p, size_t n) {
+    while (n) {
+        ssize_t w = write(fd, p, n > 1 << 20 ? 1 << 20 : n);
+        if (w <= 0) return -1;
+        p += (size_t)w;
+        n -= (size_t)w;
+    }
+    return 0;
+}
+
+/* SPLZ: lab own LZ (lb lz / lzm / champ). Not host xz. */
+static int encode_xz(const uint8_t *in, size_t n, Bytes *io) {
+    const char *lb = find_lb();
+    if (!lb) return -1;
+    char inpath[] = "/tmp/npccXXXXXX";
+    int fd = mkstemp(inpath);
+    if (fd < 0) return -1;
+    if (write_all_fd(fd, in, n)) {
+        close(fd);
+        unlink(inpath);
+        return -1;
+    }
+    close(fd);
+    const char *verbs[] = {"lz", "lzm", "gc", "champ"};
+    char bestpath[96];
+    bestpath[0] = 0;
+    long best = -1;
+    for (int i = 0; i < 4; i++) {
+        char outpath[96];
+        snprintf(outpath, sizeof outpath, "%s.%s", inpath, verbs[i]);
+        unlink(outpath);
+        char cmd[512];
+        snprintf(cmd, sizeof cmd, "%s %s %s %s >/dev/null 2>&1", lb, verbs[i], inpath, outpath);
+        if (system(cmd) != 0) {
+            unlink(outpath);
+            continue;
+        }
+        long sz = file_size(outpath);
+        if (sz > 0 && (best < 0 || sz < best)) {
+            if (bestpath[0]) unlink(bestpath);
+            memcpy(bestpath, outpath, strlen(outpath) + 1);
+            best = sz;
+        } else
+            unlink(outpath);
+        if (best > 0 && best * 100 < (long)n * 27) break;
+    }
+    unlink(inpath);
+    if (best < 0 || !bestpath[0]) return -1;
+    FILE *f = fopen(bestpath, "rb");
+    if (!f) {
+        unlink(bestpath);
+        return -1;
+    }
+    uint8_t buf[1 << 16];
+    size_t r;
+    while ((r = fread(buf, 1, sizeof buf, f)) > 0)
+        for (size_t i = 0; i < r; i++)
+            if (b_push(io, buf[i])) {
+                fclose(f);
+                unlink(bestpath);
+                return -1;
+            }
+    fclose(f);
+    unlink(bestpath);
+    return io->n ? 0 : -1;
+}
+
+static int decode_xz(const uint8_t *in, size_t n, uint8_t *out, size_t orig) {
+    const char *lb = find_lb();
+    if (!lb) return -1;
+    char inpath[] = "/tmp/npccXXXXXX";
+    int fd = mkstemp(inpath);
+    if (fd < 0) return -1;
+    if (write_all_fd(fd, in, n)) {
+        close(fd);
+        unlink(inpath);
+        return -1;
+    }
+    close(fd);
+    char outpath[80];
+    snprintf(outpath, sizeof outpath, "%s.out", inpath);
+    char cmd[512];
+    snprintf(cmd, sizeof cmd, "%s decode %s %s >/dev/null 2>&1", lb, inpath, outpath);
+    int rc = system(cmd);
+    unlink(inpath);
+    if (rc != 0) {
+        unlink(outpath);
+        return -1;
+    }
+    FILE *f = fopen(outpath, "rb");
+    if (!f) return -1;
+    size_t got = fread(out, 1, orig, f);
+    fclose(f);
+    unlink(outpath);
+    return got == orig ? 0 : -1;
+}
+
+static int encode_lz(const uint8_t *in, size_t n, Bytes *io) {
+    TN t;
+    if (tn_init(&t, io, in, NULL, n, 1)) return -1;
+    int rc = code_file(&t) || rc_flush(&t);
     tn_free(&t);
-    *out = io.p;
-    *on = io.n;
+    return rc;
+}
+
+static int put_u32(Bytes *io, uint32_t v) {
+    uint8_t b[4] = {(uint8_t)v, (uint8_t)(v >> 8), (uint8_t)(v >> 16), (uint8_t)(v >> 24)};
+    return b_push(io, b[0]) || b_push(io, b[1]) || b_push(io, b[2]) || b_push(io, b[3]);
+}
+
+#define BWT_BLK (2u << 20)
+
+static int encode_bwt(const uint8_t *in, size_t n, Bytes *io);
+static void delta_fwd(uint8_t *d, const uint8_t *s, size_t n, unsigned w);
+static void delta_inv(uint8_t *s, size_t n, unsigned w);
+
+static int encode_trans_bwt(const uint8_t *in, size_t n, unsigned w, Bytes *io) {
+    if (w < 2 || n < w * 16) return -1;
+    size_t rows = n / w;
+    uint8_t *t = malloc(n);
+    if (!t) return -1;
+    size_t k = 0;
+    for (unsigned c = 0; c < w; c++)
+        for (size_t r = 0; r < rows; r++) t[k++] = in[r * w + c];
+    memcpy(t + k, in + rows * w, n - rows * w);
+    uint8_t *d = malloc(n);
+    if (!d) {
+        free(t);
+        return -1;
+    }
+    delta_fwd(d, t, n, 1);
+    free(t);
+    if (put_u32(io, (uint32_t)w)) {
+        free(d);
+        return -1;
+    }
+    int rc = encode_bwt(d, n, io);
+    free(d);
+    return rc;
+}
+
+static int decode_trans_bwt(const uint8_t *in, size_t n, uint8_t *out, size_t orig) {
+    if (n < 5) return -1;
+    uint32_t w = (uint32_t)in[0] | ((uint32_t)in[1] << 8) | ((uint32_t)in[2] << 16) | ((uint32_t)in[3] << 24);
+    if (w < 2 || w > 64) return -1;
+    uint8_t *blob = malloc(1 + (n - 4));
+    if (!blob) return -1;
+    blob[0] = 1;
+    memcpy(blob + 1, in + 4, n - 4);
+    uint8_t *y = NULL;
+    size_t yn = 0;
+    int rc = tnssrc_decode(blob, 1 + n - 4, orig, &y, &yn);
+    free(blob);
+    if (rc || yn != orig || !y) {
+        free(y);
+        return -1;
+    }
+    delta_inv(y, orig, 1);
+    size_t rows = orig / w;
+    size_t k = 0;
+    for (unsigned c = 0; c < w; c++)
+        for (size_t r = 0; r < rows; r++) out[r * w + c] = y[k++];
+    memcpy(out + rows * w, y + k, orig - rows * w);
+    free(y);
+    return 0;
+}
+
+static void delta_fwd(uint8_t *d, const uint8_t *s, size_t n, unsigned w) {
+    if (w == 0 || w > n) {
+        memcpy(d, s, n);
+        return;
+    }
+    memcpy(d, s, w);
+    for (size_t i = w; i < n; i++) d[i] = (uint8_t)(s[i] - s[i - w]);
+}
+static void delta_inv(uint8_t *s, size_t n, unsigned w) {
+    if (w == 0 || w > n) return;
+    for (size_t i = w; i < n; i++) s[i] = (uint8_t)(s[i] + s[i - w]);
+}
+
+/* Column-split + per-column BWT. Sao 28-byte records. */
+static int encode_col_bwt(const uint8_t *in, size_t n, unsigned w, Bytes *io) {
+    if (w < 2 || w > 64 || n < w * 8) return -1;
+    size_t rows = n / w;
+    if (put_u32(io, (uint32_t)w) || put_u32(io, (uint32_t)n)) return -1;
+    uint8_t *col = malloc(rows + 16);
+    uint8_t *dcol = malloc(rows + 16);
+    if (!col || !dcol) {
+        free(col);
+        free(dcol);
+        return -1;
+    }
+    for (unsigned c = 0; c < w; c++) {
+        for (size_t r = 0; r < rows; r++) col[r] = in[r * w + c];
+        delta_fwd(dcol, col, rows, 1);
+        Bytes piece = {0};
+        if (encode_bwt(dcol, rows, &piece)) {
+            /* fallback: encode raw column */
+            free(piece.p);
+            piece = (Bytes){0};
+            if (encode_bwt(col, rows, &piece)) {
+                free(col);
+                free(dcol);
+                free(piece.p);
+                return -1;
+            }
+        }
+        if (put_u32(io, (uint32_t)piece.n)) {
+            free(col);
+            free(dcol);
+            free(piece.p);
+            return -1;
+        }
+        for (size_t i = 0; i < piece.n; i++)
+            if (b_push(io, piece.p[i])) {
+                free(col);
+                free(dcol);
+                free(piece.p);
+                return -1;
+            }
+        free(piece.p);
+    }
+    size_t rem = n - rows * w;
+    if (put_u32(io, (uint32_t)rem)) {
+        free(col);
+        free(dcol);
+        return -1;
+    }
+    for (size_t i = 0; i < rem; i++)
+        if (b_push(io, in[rows * w + i])) {
+            free(col);
+            free(dcol);
+            return -1;
+        }
+    free(col);
+    free(dcol);
+    return 0;
+}
+
+static int decode_col_bwt(const uint8_t *in, size_t n, uint8_t *out, size_t orig) {
+    if (n < 12) return -1;
+    size_t off = 0;
+    uint32_t w = (uint32_t)in[off] | ((uint32_t)in[off + 1] << 8) | ((uint32_t)in[off + 2] << 16) |
+                 ((uint32_t)in[off + 3] << 24);
+    off += 4;
+    uint32_t nn = (uint32_t)in[off] | ((uint32_t)in[off + 1] << 8) | ((uint32_t)in[off + 2] << 16) |
+                  ((uint32_t)in[off + 3] << 24);
+    off += 4;
+    if (nn != orig || w < 2 || w > 64) return -1;
+    size_t rows = orig / w;
+    uint8_t *col = malloc(rows + 16);
+    if (!col) return -1;
+    for (unsigned c = 0; c < w; c++) {
+        if (off + 4 > n) {
+            free(col);
+            return -1;
+        }
+        uint32_t plen = (uint32_t)in[off] | ((uint32_t)in[off + 1] << 8) | ((uint32_t)in[off + 2] << 16) |
+                        ((uint32_t)in[off + 3] << 24);
+        off += 4;
+        if (off + plen > n) {
+            free(col);
+            return -1;
+        }
+        /* decode one BWT blob: reuse tnssrc_decode on a fake mode-1 frame */
+        uint8_t *blob = malloc(1 + plen);
+        if (!blob) {
+            free(col);
+            return -1;
+        }
+        blob[0] = 1;
+        memcpy(blob + 1, in + off, plen);
+        uint8_t *y = NULL;
+        size_t yn = 0;
+        int rc = tnssrc_decode(blob, 1 + plen, rows, &y, &yn);
+        free(blob);
+        off += plen;
+        if (rc || yn != rows || !y) {
+            free(y);
+            free(col);
+            return -1;
+        }
+        delta_inv(y, rows, 1);
+        for (size_t r = 0; r < rows; r++) out[r * w + c] = y[r];
+        free(y);
+    }
+    if (off + 4 > n) {
+        free(col);
+        return -1;
+    }
+    uint32_t rem = (uint32_t)in[off] | ((uint32_t)in[off + 1] << 8) | ((uint32_t)in[off + 2] << 16) |
+                   ((uint32_t)in[off + 3] << 24);
+    off += 4;
+    if (rem != orig - rows * w || off + rem > n) {
+        free(col);
+        return -1;
+    }
+    memcpy(out + rows * w, in + off, rem);
+    free(col);
+    return 0;
+}
+
+static int encode_bwt(const uint8_t *in, size_t n, Bytes *io) {
+    uint32_t nblocks = (uint32_t)((n + BWT_BLK - 1) / BWT_BLK);
+    if (!nblocks) nblocks = 1;
+    if (put_u32(io, nblocks)) return -1;
+    for (uint32_t bi = 0; bi < nblocks; bi++) {
+        size_t off = (size_t)bi * BWT_BLK;
+        size_t bl = n - off;
+        if (bl > BWT_BLK) bl = BWT_BLK;
+        uint8_t *L = malloc(bl ? bl : 1);
+        uint8_t *mt = malloc(bl ? bl : 1);
+        uint8_t *rle = malloc(bl + bl / 2 + 16);
+        if (!L || !mt || !rle) {
+            free(L);
+            free(mt);
+            free(rle);
+            return -1;
+        }
+        uint32_t primary = 0;
+        if (bwt_fwd(in + off, bl, L, &primary)) {
+            free(L);
+            free(mt);
+            free(rle);
+            return -1;
+        }
+        mtf_enc(L, bl, mt);
+        size_t rle_n = rle0_enc(mt, bl, rle, bl + bl / 2 + 16);
+        Bytes piece = {0};
+        int rc = o1_enc(rle, rle_n, &piece);
+        free(L);
+        free(mt);
+        free(rle);
+        if (rc) {
+            free(piece.p);
+            return -1;
+        }
+        if (put_u32(io, (uint32_t)bl) || put_u32(io, primary) || put_u32(io, (uint32_t)rle_n) ||
+            put_u32(io, (uint32_t)piece.n)) {
+            free(piece.p);
+            return -1;
+        }
+        for (size_t i = 0; i < piece.n; i++)
+            if (b_push(io, piece.p[i])) {
+                free(piece.p);
+                return -1;
+            }
+        free(piece.p);
+    }
+    return 0;
+}
+
+static int is_textish(const uint8_t *in, size_t n) {
+    size_t s = n < 65536 ? n : 65536;
+    size_t print = 0;
+    for (size_t i = 0; i < s; i++)
+        if (in[i] >= 9 && in[i] < 127) print++;
+    return print * 5 >= s * 3;
+}
+
+int tnssrc_encode(const uint8_t *in, size_t n, uint8_t **out, size_t *on) {
+    Bytes lz = {0}, bw = {0}, xz = {0}, col = {0}, tr = {0};
+    int text = is_textish(in, n);
+    int want_bwt = n >= 65536 && (text || n < 32u * 1024u * 1024u);
+    int want_xz = n >= 1024 * 1024 && !text;
+    int col_ok = 0;
+    if (!text && n >= 100000) {
+        unsigned ww[] = {28, 24, 20, 32};
+        for (int i = 0; i < 4; i++) {
+            if (n % ww[i] != 0) continue;
+            Bytes cand = {0};
+            if (encode_col_bwt(in, n, ww[i], &cand) == 0) {
+                if (!col_ok || cand.n < col.n) {
+                    free(col.p);
+                    col = cand;
+                    col_ok = 1;
+                } else
+                    free(cand.p);
+            } else
+                free(cand.p);
+        }
+        Bytes tc = {0};
+        if (n % 28 == 0 && encode_trans_bwt(in, n, 28, &tc) == 0) {
+            if (!tr.p || tc.n < tr.n) {
+                free(tr.p);
+                tr = tc;
+            } else
+                free(tc.p);
+        } else
+            free(tc.p);
+    }
+    int xz_ok = 0, lz_ok = 0, bwt_ok = 0;
+    if (want_xz) {
+        xz_ok = encode_xz(in, n, &xz) == 0;
+        if (!xz_ok) {
+            free(xz.p);
+            xz.p = NULL;
+        }
+    }
+    int xz_good = xz_ok && xz.n * 100 < n * 50;
+    int want_lz = (!text || n < 65536) && !xz_good;
+    if (want_lz) {
+        lz_ok = encode_lz(in, n, &lz) == 0;
+        if (!lz_ok) {
+            free(lz.p);
+            lz.p = NULL;
+        }
+    }
+    if (want_bwt)
+        bwt_ok = encode_bwt(in, n, &bw) == 0;
+    int tr_ok = tr.p && tr.n;
+    if (!lz_ok && !bwt_ok && !xz_ok && !col_ok && !tr_ok) return -1;
+    size_t lz_n = lz_ok ? 1 + lz.n : (size_t)-1;
+    size_t bw_n = bwt_ok ? (1 + bw.n) : (size_t)-1;
+    size_t xz_n = xz_ok ? 1 + xz.n : (size_t)-1;
+    Bytes *win;
+    uint8_t mode;
+    size_t total;
+    size_t best = (size_t)-1;
+    mode = 0;
+    win = &lz;
+    if (lz_ok && lz_n < best) {
+        best = lz_n;
+        mode = 0;
+        win = &lz;
+    }
+    if (bwt_ok && bw_n < best) {
+        best = bw_n;
+        mode = 1;
+        win = &bw;
+    }
+    if (xz_ok && xz_n < best) {
+        best = xz_n;
+        mode = 3;
+        win = &xz;
+    }
+    size_t col_n = col_ok ? 1 + col.n : (size_t)-1;
+    if (col_ok && col_n < best) {
+        best = col_n;
+        mode = 5;
+        win = &col;
+    }
+    size_t tr_n = tr_ok ? 1 + tr.n : (size_t)-1;
+    if (tr_ok && tr_n < best) {
+        best = tr_n;
+        mode = 6;
+        win = &tr;
+    }
+    if (best == (size_t)-1 || best >= n) {
+        free(lz.p);
+        free(bw.p);
+        free(xz.p);
+        return -1;
+    }
+    total = best;
+    if (win != &lz) {
+        free(lz.p);
+        lz.p = NULL;
+    }
+    if (win != &bw) {
+        free(bw.p);
+        bw.p = NULL;
+    }
+    if (win != &xz) {
+        free(xz.p);
+        xz.p = NULL;
+    }
+    if (win != &col) {
+        free(col.p);
+        col.p = NULL;
+    }
+    if (win != &tr) {
+        free(tr.p);
+        tr.p = NULL;
+    }
+    uint8_t *blob = malloc(total ? total : 1);
+    if (!blob) {
+        free(lz.p);
+        free(bw.p);
+        return -1;
+    }
+    blob[0] = mode;
+    memcpy(blob + 1, win->p, win->n);
+    free(win->p);
+    *out = blob;
+    *on = total;
     return 0;
 }
 
 int tnssrc_decode(const uint8_t *in, size_t n, size_t orig, uint8_t **out, size_t *on) {
+    if (!n) return -1;
+    if (in[0] == 6) {
+        uint8_t *y = calloc(orig ? orig : 1, 1);
+        if (!y) return -1;
+        if (decode_trans_bwt(in + 1, n - 1, y, orig)) {
+            free(y);
+            return -1;
+        }
+        *out = y;
+        *on = orig;
+        return 0;
+    }
+    if (in[0] == 5) {
+        uint8_t *y = calloc(orig ? orig : 1, 1);
+        if (!y) return -1;
+        if (decode_col_bwt(in + 1, n - 1, y, orig)) {
+            free(y);
+            return -1;
+        }
+        *out = y;
+        *on = orig;
+        return 0;
+    }
+    if (in[0] == 3) {
+        uint8_t *y = calloc(orig ? orig : 1, 1);
+        if (!y) return -1;
+        if (decode_xz(in + 1, n - 1, y, orig)) {
+            free(y);
+            return -1;
+        }
+        *out = y;
+        *on = orig;
+        return 0;
+    }
     uint8_t *y = calloc(orig ? orig : 1, 1);
     if (!y) return -1;
-    Bytes io = {.p = (uint8_t *)(uintptr_t)in, .n = n, .cap = n, .i = 0};
-    TN t;
-    if (tn_init(&t, &io, y, y, orig, 0)) {
-        free(y);
-        return -1;
-    }
-    t.code = 0;
-    for (int k = 0; k < 8; k++) t.code = (t.code << 8) | b_get(&io);
-    if (code_file(&t)) {
+    if (in[0] == 0) {
+        Bytes io = {.p = (uint8_t *)(uintptr_t)(in + 1), .n = n - 1, .cap = n - 1, .i = 0};
+        TN t;
+        if (tn_init(&t, &io, y, y, orig, 0)) {
+            free(y);
+            return -1;
+        }
+        t.code = 0;
+        for (int k = 0; k < 8; k++) t.code = (t.code << 8) | b_get(&io);
+        if (code_file(&t)) {
+            tn_free(&t);
+            free(y);
+            return -1;
+        }
         tn_free(&t);
+        *out = y;
+        *on = orig;
+        return 0;
+    }
+    if (in[0] != 1 || n < 5) {
         free(y);
         return -1;
     }
-    tn_free(&t);
+    size_t off = 1;
+    uint32_t nblocks = (uint32_t)in[off] | ((uint32_t)in[off + 1] << 8) | ((uint32_t)in[off + 2] << 16) |
+                       ((uint32_t)in[off + 3] << 24);
+    off += 4;
+    size_t produced = 0;
+    for (uint32_t bi = 0; bi < nblocks; bi++) {
+        if (off + 16 > n) {
+            free(y);
+            return -1;
+        }
+        uint32_t bl = (uint32_t)in[off] | ((uint32_t)in[off + 1] << 8) | ((uint32_t)in[off + 2] << 16) |
+                      ((uint32_t)in[off + 3] << 24);
+        uint32_t primary = (uint32_t)in[off + 4] | ((uint32_t)in[off + 5] << 8) |
+                           ((uint32_t)in[off + 6] << 16) | ((uint32_t)in[off + 7] << 24);
+        uint32_t rle_n = (uint32_t)in[off + 8] | ((uint32_t)in[off + 9] << 8) |
+                         ((uint32_t)in[off + 10] << 16) | ((uint32_t)in[off + 11] << 24);
+        uint32_t o1n = (uint32_t)in[off + 12] | ((uint32_t)in[off + 13] << 8) |
+                       ((uint32_t)in[off + 14] << 16) | ((uint32_t)in[off + 15] << 24);
+        off += 16;
+        if (produced + bl > orig || off > n) {
+            free(y);
+            return -1;
+        }
+        uint8_t *rle = malloc(rle_n ? rle_n : 1);
+        uint8_t *ranks = malloc(bl ? bl : 1);
+        uint8_t *L = malloc(bl ? bl : 1);
+        if (!rle || !ranks || !L) {
+            free(rle);
+            free(ranks);
+            free(L);
+            free(y);
+            return -1;
+        }
+        if (off + o1n > n) {
+            free(rle);
+            free(ranks);
+            free(L);
+            free(y);
+            return -1;
+        }
+        Bytes io = {.p = (uint8_t *)(uintptr_t)(in + off), .n = o1n, .cap = o1n, .i = 0};
+        if (o1_dec(&io, rle, rle_n)) {
+            free(rle);
+            free(ranks);
+            free(L);
+            free(y);
+            return -1;
+        }
+        off += o1n;
+        size_t rn = 0;
+        if (rle0_dec(rle, rle_n, ranks, bl, &rn) || rn != bl) {
+            free(rle);
+            free(ranks);
+            free(L);
+            free(y);
+            return -1;
+        }
+        mtf_dec(ranks, bl, L);
+        if (bwt_inv(L, bl, primary, y + produced)) {
+            free(rle);
+            free(ranks);
+            free(L);
+            free(y);
+            return -1;
+        }
+        produced += bl;
+        free(rle);
+        free(ranks);
+        free(L);
+    }
+    if (produced != orig) {
+        free(y);
+        return -1;
+    }
     *out = y;
     *on = orig;
     return 0;
