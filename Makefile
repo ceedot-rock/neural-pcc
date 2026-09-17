@@ -1,8 +1,9 @@
 CC ?= gcc
 CFLAGS ?= -O3 -march=native -std=c11 -Wall -Wextra -Isrc
 LDFLAGS ?= -lz -lm
+PREFIX ?= /usr/local
 
-.PHONY: all test clean bench-xml
+.PHONY: all test clean install uninstall bench-xml
 
 BIN := bin/npcc
 
@@ -29,8 +30,15 @@ test: tests/test_npcc tests/test_riser tests/test_lzm2
 	./tests/test_riser
 	./tests/test_lzm2
 
+install: $(BIN)
+	install -d $(DESTDIR)$(PREFIX)/bin
+	install -m 755 $(BIN) $(DESTDIR)$(PREFIX)/bin/npcc
+
+uninstall:
+	rm -f $(DESTDIR)$(PREFIX)/bin/npcc
+
 bench-xml: $(BIN)
 	$(BIN) bench /home/ceedotrock/data/silesia/xml classical
 
 clean:
-	rm -f bin/npcc src/*.o tests/test_npcc tests/test_riser
+	rm -f bin/npcc src/*.o tests/test_npcc tests/test_riser tests/test_lzm2

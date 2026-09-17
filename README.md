@@ -2,7 +2,21 @@
 
 **License:** AGPL-3.0-or-later **or** a written commercial grant ([LICENSE](LICENSE), [COMMERCIAL.md](COMMERCIAL.md)). Visibility is not a grant to ship TNSSRC in a closed product.
 
-**Compressor 2.** PCC is 1. TriNeural Shared Spine Row Compression. Own C. Not host xz/gzip/bzip2.
+**Compressor 2.** PCC is compressor 1. TriNeural Shared Spine Row Compression. Own C. Not host xz/gzip/bzip2. Separate from Dial A / PCC daily.
+
+## Install (CLI-first)
+
+```
+make
+sudo make install          # PREFIX=/usr/local → /usr/local/bin/npcc
+# or: make install PREFIX=$HOME/.local
+npcc --help
+npcc --version
+```
+
+Uninstall: `sudo make uninstall` (same `PREFIX`).
+
+## Usage
 
 ```
 make
@@ -14,9 +28,13 @@ make test
 
 `ar` / `full` run TNSSRC. Pathway laws in `cuni/` (CuNi: same stdout on every catalog seat, or refuse). Never expand vs `|x|`.
 
-## Silesia 12
+## Claim lock
 
-Lab 12/12 DECODE_OK. Packed **48,541,366** / 211,938,580. Beats xz-9 (48,795,480) and PCC pcc-0.12.1 (51,498,645). Not #1. zpaq-m5 still ahead. Not an OSCB line until tagged and sent.
+Lab Silesia 12: packed **48.54M (48,541,366)** / 211,938,580. Beats xz-9 (48,795,480). DECODE_OK 12/12. Beats PCC pcc-0.12.1 (51,498,645).
+
+**Never claim:** #1, OSCB, or Fast MB/s. Speed is not this seat’s claim.
+
+## Silesia 12
 
 | file | raw | TNSSRC | PCC | xz-9 |
 |---|---:|---:|---:|---:|
