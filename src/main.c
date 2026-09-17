@@ -305,18 +305,56 @@ static int cmd_serve(const char *host, int port) {
     }
 }
 
+#ifndef NPCC_VERSION
+#define NPCC_VERSION "0.1.0"
+#endif
+
 static void usage(void) {
     fprintf(stderr,
-            "usage: npcc c|d INPUT [OUTPUT]\n"
-            "       npcc quik|neat INPUT [OUTPUT]\n"
-            "       npcc bench INPUT [full|ar|classical|riser]\n"
-            "       npcc serve [host] [port]\n");
+            "npcc %s — TNSSRC file compressor (CLI)\n"
+            "\n"
+            "What it is:\n"
+            "  Compressor 2 (TNSSRC / Neural-PCC). Separate from Dial A / PCC daily\n"
+            "  (PCC is compressor 1). Own C codec — not a wrapper around xz/gzip/bzip2.\n"
+            "\n"
+            "Commands:\n"
+            "  npcc c INPUT [OUTPUT]     Compress a file (write .npcc; stdout if no OUTPUT)\n"
+            "  npcc d INPUT [OUTPUT]     Decompress a .npcc file back to original bytes\n"
+            "  npcc bench INPUT [MODE]   Time encode+decode; MODE = ar|full|classical|riser\n"
+            "                            (ar and full both select the TNSSRC pathway)\n"
+            "  npcc quik|neat INPUT [OUTPUT]\n"
+            "                            Lab AIP riser helpers (build / destruct)\n"
+            "  npcc --version            Print version and exit\n"
+            "  npcc --help               Show this help\n"
+            "\n"
+            "Lab-only (local loopback; not a hosted product path):\n"
+            "  npcc serve [host] [port]  Local HTTP lab listener (default 127.0.0.1:8080)\n"
+            "\n"
+            "Jargon once:\n"
+            "  Silesia 12  — standard 12-file compression corpus (~212 MB raw)\n"
+            "  DECODE_OK  — round-trip decompress equals original bytes\n"
+            "  xz-9       — xz at maximum compression (common strong baseline)\n"
+            "\n"
+            "Claim lock (honesty):\n"
+            "  Silesia packed 48.54M (48,541,366) / beats xz-9 / DECODE_OK.\n"
+            "  Never #1, never OSCB, never Fast MB/s. Compressor 2 only.\n"
+            "\n"
+            "License: AGPL-3.0-or-later OR commercial (see LICENSE / COMMERCIAL.md).\n",
+            NPCC_VERSION);
 }
 
 int main(int argc, char **argv) {
     if (argc < 2) {
         usage();
         return 2;
+    }
+    if (!strcmp(argv[1], "--help") || !strcmp(argv[1], "-h") || !strcmp(argv[1], "help")) {
+        usage();
+        return 0;
+    }
+    if (!strcmp(argv[1], "--version") || !strcmp(argv[1], "-V") || !strcmp(argv[1], "version")) {
+        printf("npcc %s\n", NPCC_VERSION);
+        return 0;
     }
     if (!strcmp(argv[1], "c")) return cmd_cd(1, argc - 2, argv + 2);
     if (!strcmp(argv[1], "d")) return cmd_cd(0, argc - 2, argv + 2);
