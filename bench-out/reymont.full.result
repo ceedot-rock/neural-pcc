@@ -1,0 +1,1 @@
+reymont 6627202 1181543 1:raw 1172.0 yes 57770 rc=0 drc=0 inner=bwt w=raw seats=raw>bitplane>shuffle>delta8>delta16>xor16 full=1 routedflag=1 enc=1171.954 to=3600

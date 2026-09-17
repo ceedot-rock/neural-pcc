@@ -1,0 +1,27 @@
+# sicknode routing audit v1
+# tag=/home/hatch/workspace/helix-match-exp/corpus/full/ooffice block_size=262144 nblocks=24
+# per-block: idx mode param probe_bytes tiebreak(m2mode) | cand_mode:bytes,...
+0 exe 0 117056 0(m0) 4 | raw:134124 exe:117056 bitplane:250442 shuffle:195849
+1 exe 0 116848 0(m0) 4 | raw:134274 exe:116848 bitplane:256814 shuffle:199737
+2 exe 0 123028 0(m0) 4 | raw:137073 exe:123028 bitplane:255720 shuffle:198710
+3 exe 0 121939 0(m0) 4 | raw:137787 exe:121939 bitplane:259555 shuffle:203221
+4 exe 0 120247 0(m0) 4 | raw:134839 exe:120247 bitplane:255546 shuffle:198408
+5 exe 0 122933 0(m0) 4 | raw:137616 exe:122933 bitplane:255278 shuffle:199901
+6 exe 0 122841 0(m0) 4 | raw:137233 exe:122841 bitplane:254203 shuffle:199721
+7 exe 0 99205 0(m0) 4 | raw:119582 exe:99205 bitplane:238207 shuffle:172651
+8 exe 0 104188 0(m0) 4 | raw:122446 exe:104188 bitplane:241413 shuffle:176680
+9 exe 0 120505 0(m0) 4 | raw:137545 exe:120505 bitplane:252389 shuffle:196533
+10 exe 0 119466 0(m0) 4 | raw:137966 exe:119466 bitplane:254753 shuffle:198834
+11 exe 0 124303 0(m0) 4 | raw:140261 exe:124303 bitplane:255795 shuffle:200577
+12 exe 0 117609 0(m0) 4 | raw:133023 exe:117609 bitplane:251795 shuffle:192482
+13 exe 0 116556 0(m0) 4 | raw:134496 exe:116556 bitplane:251870 shuffle:192703
+14 exe 0 110438 0(m0) 4 | raw:131321 exe:110438 bitplane:250153 shuffle:187364
+15 exe 0 109770 0(m0) 4 | raw:128182 exe:109770 bitplane:243932 shuffle:184295
+16 exe 0 109250 0(m0) 4 | raw:127758 exe:109250 bitplane:246389 shuffle:186339
+17 exe 0 112814 0(m0) 4 | raw:129772 exe:112814 bitplane:245894 shuffle:187054
+18 exe 0 100957 0(m0) 4 | raw:121963 exe:100957 bitplane:238624 shuffle:171796
+19 exe 0 97654 0(m0) 4 | raw:122058 exe:97654 bitplane:215635 shuffle:160354
+20 exe 0 77965 1(m0) 4 | raw:99638 exe:90189 bitplane:124667 shuffle:90072
+21 raw 0 82403 0(m0) 4 | raw:82403 bitplane:131353 shuffle:97675 delta8:110068
+22 raw 0 105524 0(m0) 4 | raw:105524 delta16:120963 xor16:130537 img2d:X
+23 delta16 0 8738 0(m0) 4 | raw:21395 delta16:8738 xor16:11071 img2d:17908

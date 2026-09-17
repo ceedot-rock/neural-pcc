@@ -1,0 +1,1 @@
+xml 5345280 419460 1:raw 1088.6 yes 58039 rc=0 drc=0 inner=bwt w=raw seats=raw>bitplane>shuffle>delta8>delta16>delta24>delta32>xor16>xor32 full=1 routedflag=1 enc=1088.522 to=3600

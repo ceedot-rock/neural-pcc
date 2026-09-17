@@ -1,0 +1,31 @@
+# sicknode routing audit v1
+# tag=/home/hatch/workspace/helix-match-exp/corpus/full/sao block_size=262144 nblocks=28
+# per-block: idx mode param probe_bytes tiebreak(m2mode) | cand_mode:bytes,...
+0 raw 0 183204 0(m0) 4 | raw:183204 columnar:194475 bitplane:263378 shuffle:226358
+1 raw 0 182281 0(m0) 4 | raw:182281 columnar:194208 bitplane:263411 shuffle:225666
+2 raw 0 181862 0(m0) 4 | raw:181862 columnar:191722 bitplane:263191 shuffle:223243
+3 columnar 28 177243 1(m0) 4 | raw:180549 columnar:189554 bitplane:262393 shuffle:221046
+4 raw 0 180277 0(m0) 4 | raw:180277 columnar:192289 bitplane:263554 shuffle:223493
+5 raw 0 177960 0(m0) 4 | raw:177960 columnar:189397 bitplane:263084 shuffle:220581
+6 raw 0 179752 0(m0) 4 | raw:179752 columnar:191296 bitplane:263218 shuffle:222447
+7 raw 0 176995 0(m0) 4 | raw:176995 columnar:186697 bitplane:261918 shuffle:217458
+8 raw 0 181388 0(m0) 4 | raw:181388 columnar:191559 bitplane:262887 shuffle:222773
+9 raw 0 179922 0(m0) 4 | raw:179922 columnar:189468 bitplane:262427 shuffle:220670
+10 raw 0 180878 0(m0) 4 | raw:180878 columnar:191942 bitplane:263094 shuffle:222698
+11 raw 0 182300 0(m0) 4 | raw:182300 columnar:192261 bitplane:263057 shuffle:222461
+12 raw 0 183327 0(m0) 4 | raw:183327 columnar:193353 bitplane:262913 shuffle:223494
+13 columnar 28 178039 1(m0) 4 | raw:184549 columnar:193313 bitplane:262867 shuffle:222433
+14 raw 0 183241 0(m0) 4 | raw:183241 columnar:193469 bitplane:262963 shuffle:223712
+15 raw 0 184322 0(m0) 4 | raw:184322 columnar:194060 bitplane:262958 shuffle:223895
+16 raw 0 181156 0(m0) 4 | raw:181156 columnar:191539 bitplane:262691 shuffle:223213
+17 raw 0 182498 0(m0) 4 | raw:182498 columnar:192676 bitplane:262825 shuffle:223456
+18 raw 0 179481 0(m0) 4 | raw:179481 columnar:189151 bitplane:262683 shuffle:221445
+19 raw 0 180398 0(m0) 4 | raw:180398 columnar:190296 bitplane:261477 shuffle:219847
+20 raw 0 183737 0(m0) 4 | raw:183737 columnar:194041 bitplane:263384 shuffle:225485
+21 raw 0 181553 0(m0) 4 | raw:181553 columnar:192476 bitplane:262476 shuffle:224351
+22 raw 0 181939 0(m0) 4 | raw:181939 columnar:192106 bitplane:261838 shuffle:222781
+23 raw 0 180487 0(m0) 4 | raw:180487 columnar:191182 bitplane:262915 shuffle:222775
+24 raw 0 181837 0(m0) 4 | raw:181837 columnar:191278 bitplane:262551 shuffle:222518
+25 raw 0 180076 0(m0) 4 | raw:180076 columnar:190773 bitplane:262132 shuffle:222271
+26 raw 0 184521 0(m0) 4 | raw:184521 columnar:193973 bitplane:262704 shuffle:225608
+27 columnar 28 124737 1(m0) 4 | raw:126437 columnar:132723 bitplane:174589 shuffle:153761

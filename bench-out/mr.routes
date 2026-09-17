@@ -1,0 +1,42 @@
+# sicknode routing audit v1
+# tag=/home/hatch/workspace/helix-match-exp/corpus/full/mr block_size=262144 nblocks=39
+# per-block: idx mode param probe_bytes tiebreak(m2mode) | cand_mode:bytes,...
+0 raw 0 56616 0(m7) 4 | raw:56616 columnar:76130 bitplane:68568 shuffle:64593
+1 delta16 0 62437 1(m7) 4 | raw:62441 delta16:62437 img2d:63253 xor16:69314
+2 raw 0 55704 1(m7) 4 | raw:55704 delta16:57408 img2d:58231 xor16:62036
+3 delta16 0 64046 1(m7) 4 | raw:64355 delta16:64046 img2d:67083 xor16:71224
+4 raw 0 56938 1(m7) 4 | raw:56938 delta16:58539 img2d:59706 xor16:63361
+5 delta16 0 64904 1(m7) 4 | raw:65602 delta16:64904 img2d:69085 xor16:72320
+6 raw 0 58390 1(m7) 4 | raw:58390 delta16:59495 img2d:61393 xor16:64709
+7 delta16 0 66359 1(m7) 4 | raw:67317 delta16:66359 img2d:70752 xor16:73901
+8 raw 0 58879 1(m7) 4 | raw:58879 delta16:59506 img2d:61601 xor16:65304
+9 delta16 0 66654 1(m7) 4 | raw:67748 delta16:66654 delta32:75867 img2d:70459
+10 raw 0 59751 1(m7) 4 | raw:59751 delta16:60527 img2d:63230 xor16:65906
+11 delta16 0 66569 1(m7) 4 | raw:67840 delta16:66569 delta32:75639 img2d:69459
+12 raw 0 60438 1(m7) 4 | raw:60438 delta16:61149 img2d:64803 xor16:66837
+13 delta16 0 68440 1(m7) 4 | raw:69101 delta16:68440 delta32:77621 img2d:73259
+14 raw 0 61305 1(m7) 4 | raw:61305 delta16:62071 img2d:65047 xor16:67364
+15 delta16 0 69164 1(m7) 4 | raw:69893 delta16:69164 delta32:78427 img2d:74342
+16 raw 0 62729 1(m7) 4 | raw:62729 delta16:63829 img2d:68245 xor16:68999
+17 delta16 0 70316 1(m7) 4 | raw:70913 delta16:70316 delta32:79701 img2d:75097
+18 raw 0 64117 1(m7) 4 | raw:64117 delta16:64268 img2d:66892 xor16:69781
+19 delta16 0 70355 1(m7) 4 | raw:70938 delta16:70355 delta32:79779 img2d:74375
+20 delta16 0 67156 1(m7) 4 | raw:67411 delta16:67156 img2d:68092 xor16:72817
+21 delta16 0 70869 1(m7) 4 | raw:71109 delta16:70869 delta32:80179 img2d:76138
+22 img2d 0 68122 1(m7) 4 | raw:68914 delta16:68459 img2d:68122 xor16:74315
+23 delta16 0 69796 1(m7) 4 | raw:69973 delta16:69796 delta32:79195 img2d:75997
+24 img2d 0 67488 1(m7) 4 | raw:69709 delta16:69645 img2d:67488 xor16:74744
+25 raw 0 69856 1(m7) 4 | raw:69856 delta16:70150 img2d:78144 xor16:76723
+26 img2d 0 68711 1(m7) 4 | raw:70124 delta16:70147 img2d:68711 xor16:75154
+27 delta16 0 69356 1(m7) 4 | raw:69806 delta16:69356 img2d:75543 xor16:76832
+28 img2d 0 70490 1(m7) 4 | raw:71233 delta16:71620 img2d:70490 xor16:76330
+29 delta16 0 69753 1(m7) 4 | raw:71642 delta16:69753 img2d:74922 xor16:77995
+30 img2d 0 72891 1(m7) 4 | raw:73854 delta16:73848 img2d:72891 xor16:78546
+31 delta16 0 69545 1(m7) 4 | raw:71428 delta16:69545 img2d:75881 xor16:77385
+32 raw 0 72019 1(m7) 4 | raw:72019 delta16:72640 img2d:72664 xor16:77225
+33 delta16 0 71833 1(m7) 4 | raw:72680 delta16:71833 img2d:77894 xor16:78811
+34 raw 0 71932 1(m7) 4 | raw:71932 delta16:72239 img2d:72130 xor16:77119
+35 delta16 0 70546 1(m7) 4 | raw:72963 delta16:70546 img2d:70761 xor16:78827
+36 img2d 0 70099 1(m7) 4 | raw:71845 delta16:71620 img2d:70099 xor16:77121
+37 delta16 0 72394 1(m7) 4 | raw:74711 delta16:72394 img2d:76078 xor16:80158
+38 raw 0 1209 0(m7) 4 | raw:1209 columnar:1558 bitplane:1484 shuffle:1369

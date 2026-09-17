@@ -1,0 +1,24 @@
+# sicknode routing audit v1
+# tag=/home/hatch/workspace/helix-match-exp/corpus/full/xml block_size=262144 nblocks=21
+# per-block: idx mode param probe_bytes tiebreak(m2mode) | cand_mode:bytes,...
+0 raw 0 11992 0(m7) 4 | raw:11992 bitplane:83166 shuffle:23394 delta8:14368
+1 raw 0 5545 0(m7) 4 | raw:5545 bitplane:54299 shuffle:12522 delta8:6092
+2 raw 0 41376 0(m7) 4 | raw:41376 bitplane:148881 shuffle:84144 delta8:47701
+3 raw 0 53982 0(m7) 4 | raw:53982 bitplane:165589 shuffle:107473 delta8:61014
+4 raw 0 53555 0(m7) 4 | raw:53555 bitplane:168738 shuffle:104038 delta8:61983
+5 raw 0 14843 0(m7) 4 | raw:14843 bitplane:61425 shuffle:21004 delta8:17946
+6 raw 0 14925 0(m7) 4 | raw:14925 bitplane:62705 shuffle:21385 delta8:18055
+7 raw 0 15293 0(m7) 4 | raw:15293 bitplane:66313 shuffle:23223 delta8:18398
+8 raw 0 13548 0(m7) 4 | raw:13548 bitplane:57837 shuffle:20006 delta8:16167
+9 raw 0 14520 0(m7) 4 | raw:14520 bitplane:76508 shuffle:24193 delta8:17493
+10 raw 0 5618 0(m7) 4 | raw:5618 bitplane:64292 shuffle:13009 delta8:6838
+11 raw 0 5828 0(m7) 4 | raw:5828 bitplane:64253 shuffle:13705 delta8:7097
+12 raw 0 7700 0(m7) 4 | raw:7700 bitplane:73548 shuffle:18136 delta8:9464
+13 raw 0 5985 0(m7) 4 | raw:5985 bitplane:61045 shuffle:13960 delta8:7313
+14 raw 0 6825 0(m7) 4 | raw:6825 bitplane:66904 shuffle:15159 delta8:8399
+15 raw 0 23335 0(m7) 4 | raw:23335 bitplane:90457 shuffle:33483 delta8:29070
+16 raw 0 48286 0(m7) 4 | raw:48286 bitplane:138304 shuffle:80433 delta8:60381
+17 raw 0 43562 0(m7) 4 | raw:43562 bitplane:180740 shuffle:105005 delta8:52212
+18 raw 0 51998 0(m7) 4 | raw:51998 bitplane:195405 shuffle:124499 delta8:62213
+19 raw 0 46268 0(m7) 4 | raw:46268 bitplane:195279 shuffle:123822 delta8:53115
+20 raw 0 21164 0(m7) 4 | raw:21164 bitplane:74672 shuffle:49599 delta8:25607

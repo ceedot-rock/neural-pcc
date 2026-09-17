@@ -67,10 +67,12 @@ _pending (audit.sh Tier 3)_
 
 ### INCIDENTS
 
-- **4 VM reboots** during Bay-1 (2026-09-17 ~00:26, ~01:39, ~02:50 UTC, plus
-  one earlier). Each reboot killed the running wbc processes. The resume
-  logic in bench_wb.sh preserved all completed .result files; the run was
-  relaunched 4 times and completed 12/12 with no data loss. No matrix jobs
+- **6 VM reboots** total (3 during Bay-1 at 2026-09-17 ~00:26, ~01:39,
+  ~02:50 UTC; 1 during initial FULL at ~04:19; 2 during FULL audit at
+  ~04:20, ~05:32; plus an earlier pre-Bay restart 2026-09-16 ~23:12 UTC).
+  Each reboot killed the running wbc processes. The resume logic in
+  bench_wb.sh preserved all completed .result files; the run was
+  relaunched and completed 12/12 Bay-1 with no data loss. No matrix jobs
   were affected (none were running during the reboots). This is an
   infrastructure stability issue, not a benchmark defect.
 - No encode/decode/SHA incidents. No timeouts. No handoff mismatches.
@@ -79,4 +81,86 @@ _pending (audit.sh Tier 3)_
 
 ## P1 — Full-battery + routing audit
 
-PENDING.
+**STATUS: PARTIAL** — Bay-1 complete (12/12). FULL battery 2/12 (xml, reymont).
+Routing audit dimension-2 complete (66 slices). Dimensions 1 & 3 pending
+full FULL battery.
+
+### COST GATE
+
+**PASS.** After 2 FULL files (xml: 1088.6s/5.3MB, reymont: 1172.0s/6.6MB):
+- Rate: 0.0001888 s/byte
+- Projected 12-file (211,938,580 bytes): 40,018s = 11.1h single-thread
+- At 1.4 effective CPUs: **~7.9h wall** (< 36h gate)
+- Both FULL winners MATCH Bay-1 winners (xml: 419,460; reymont: 1,181,543).
+  FULL seats longer (9 and 6 vs 4) but winner unchanged.
+
+### Dimension 2: Hot-loop routing vs sampled per-block exact winners
+
+**Result: 58/66 top-1 agreement (87.9%). Total miss cost: 33,749 bytes.**
+
+Sampling: up to 6 blocks per file (0, 25%, 50%, 75%, last, plus one
+"interesting" block where prediction differs from neighbors or tiebreak
+fired). Each 256KB slice run through FULL battery (NPCC_WB_FULL=1); the
+slice tried-table minimum (excluding routed) is the per-block true winner.
+
+Per-file route summaries (from `npcc wbroute`):
+| file | nblocks | router prediction |
+|---|---|---|
+| dickens | 39 | raw:39 |
+| mozilla | 196 | raw:185, bitplane:1, shuffle:10 |
+| mr | 39 | raw:14, delta16:19, img2d:6 |
+| nci | 128 | raw:128 |
+| ooffice | 24 | raw:2, delta16:1, exe:21 |
+| osdb | 39 | raw:39 |
+| reymont | 26 | raw:26 |
+| samba | 83 | raw:80, shuffle:3 |
+| sao | 28 | raw:25, columnar:3 |
+| webster | 159 | raw:159 |
+| x-ray | 33 | raw:31, columnar:1, delta16:1 |
+| xml | 21 | raw:21 |
+
+Miss details (8 misses):
+- **sao** (2 misses, cost 21,111B): blocks 3 and 27 predicted columnar,
+  true winner raw. The router over-predicts columnar on sao; the
+  integrated columnar arm underperforms (cf. frontend baseline −943KB
+  not reproduced).
+- **x-ray** (5 misses, cost 12,629B): blocks 0,8,16,24 predicted
+  delta16/raw, true winner **columnar**; block 32 predicted columnar,
+  true winner shuffle. The mixer's Bay-1 seats for x-ray were
+  raw>delta16>delta32>img2d — **columnar was not seated**, yet it wins
+  4/5 sampled blocks exactly. This is a mixer blind spot: the columnar
+  transform is competitive per-block on x-ray but never gets a seat.
+- **mozilla** (1 miss, cost 9B): negligible.
+
+**Key finding:** The hot-loop router is 87.9% accurate top-1, but the
+misses are systematic: (1) sao columnar over-prediction (router sees
+structure the arm can't exploit), (2) x-ray columnar under-seating
+(exact winner missed by top-3). The 33.7KB total miss cost is small
+relative to file sizes, but the x-ray blind spot suggests the mixer
+should seat columnar for x-ray-like inputs.
+
+### Dimensions 1 & 3: Mixer top-pick and top-3 accuracy vs FULL
+
+**PENDING** — requires FULL battery handoffs for all 12 files (currently
+2/12: xml, reymont). For both completed files:
+- Dimension 1 (seats[1] vs FULL winner): xml pick=bitplane, true=raw → MISS;
+  reymont pick=bitplane, true=raw → MISS. (Expected: when raw wins,
+  the top non-raw pick cannot match.)
+- Dimension 3 (true winner in seats[1..3]): xml true=raw (seats[0]) → HIT;
+  reymont true=raw → HIT. 2/2 so far.
+
+MATRIX.md cross-check: `~/workspace/tnssrc-matrix/MATRIX.md` not present
+(matrix worker has not landed it yet; dir is read-only, never written).
+
+### Tier 3: MIXER_LOG.tsv sanity
+
+_pending (run audit.sh when FULL completes)_
+
+### INCIDENTS (audit phase)
+
+- **2 additional VM reboots** during FULL battery (2026-09-17 ~04:20,
+  ~05:32 UTC), total **6 reboots** across Bay-1 + audit. Resume logic
+  preserved all completions.
+- Heavy CPU contention from other workers' approved jobs (pcc-weights-bench
+  zstd/xz, model-weights benchmark). FULL battery processes throttled to
+  ~30-40% CPU (vs ~70% when box is free). Not killed (not mine to kill).

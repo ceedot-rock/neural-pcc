@@ -1,0 +1,29 @@
+# sicknode routing audit v1
+# tag=/home/hatch/workspace/helix-match-exp/corpus/full/reymont block_size=262144 nblocks=26
+# per-block: idx mode param probe_bytes tiebreak(m2mode) | cand_mode:bytes,...
+0 raw 0 54053 0(m7) 4 | raw:54053 bitplane:194680 shuffle:124732 delta8:60028
+1 raw 0 54252 0(m7) 4 | raw:54252 bitplane:195082 shuffle:125632 delta8:60061
+2 raw 0 53028 0(m7) 4 | raw:53028 bitplane:194154 shuffle:123966 delta8:58626
+3 raw 0 53502 0(m7) 4 | raw:53502 bitplane:194687 shuffle:124689 delta8:59149
+4 raw 0 54052 0(m7) 4 | raw:54052 bitplane:195022 shuffle:125625 delta8:59762
+5 raw 0 54682 0(m7) 4 | raw:54682 bitplane:195674 shuffle:126273 delta8:60555
+6 raw 0 54386 0(m7) 4 | raw:54386 bitplane:195162 shuffle:125747 delta8:59988
+7 raw 0 53274 0(m7) 4 | raw:53274 bitplane:194573 shuffle:124358 delta8:58727
+8 raw 0 54092 0(m7) 4 | raw:54092 bitplane:194791 shuffle:125363 delta8:59598
+9 raw 0 54124 0(m7) 4 | raw:54124 bitplane:195629 shuffle:125915 delta8:59842
+10 raw 0 53817 0(m7) 4 | raw:53817 bitplane:195392 shuffle:124789 delta8:59249
+11 raw 0 54149 0(m7) 4 | raw:54149 bitplane:195575 shuffle:125650 delta8:59742
+12 raw 0 52630 0(m7) 4 | raw:52630 bitplane:194634 shuffle:123825 delta8:58100
+13 raw 0 53482 0(m7) 4 | raw:53482 bitplane:195352 shuffle:125220 delta8:59025
+14 raw 0 53188 0(m7) 4 | raw:53188 bitplane:195215 shuffle:124837 delta8:58821
+15 raw 0 53021 0(m7) 4 | raw:53021 bitplane:195376 shuffle:124600 delta8:58702
+16 raw 0 53604 0(m7) 4 | raw:53604 bitplane:195495 shuffle:125302 delta8:59340
+17 raw 0 53183 0(m7) 4 | raw:53183 bitplane:195143 shuffle:124490 delta8:58932
+18 raw 0 52468 0(m7) 4 | raw:52468 bitplane:194639 shuffle:123909 delta8:58242
+19 raw 0 52588 0(m7) 4 | raw:52588 bitplane:195317 shuffle:124177 delta8:58303
+20 raw 0 53145 0(m7) 4 | raw:53145 bitplane:194931 shuffle:124243 delta8:58819
+21 raw 0 52161 0(m7) 4 | raw:52161 bitplane:193946 shuffle:122800 delta8:57720
+22 raw 0 52375 0(m7) 4 | raw:52375 bitplane:194484 shuffle:123083 delta8:58051
+23 raw 0 52455 0(m7) 4 | raw:52455 bitplane:194622 shuffle:123669 delta8:57959
+24 raw 0 87890 0(m7) 4 | raw:87890 bitplane:207257 shuffle:147981 delta8:95859
+25 raw 0 16793 0(m7) 4 | raw:16793 bitplane:22060 shuffle:17888 delta8:19787

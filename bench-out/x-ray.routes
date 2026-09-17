@@ -1,0 +1,36 @@
+# sicknode routing audit v1
+# tag=/home/hatch/workspace/helix-match-exp/corpus/full/x-ray block_size=262144 nblocks=33
+# per-block: idx mode param probe_bytes tiebreak(m2mode) | cand_mode:bytes,...
+0 delta16 0 128185 1(m7) 4 | raw:129806 delta16:129999 delta32:135823 img2d:X
+1 raw 0 118487 1(m7) 4 | raw:118487 delta16:120277 delta32:125918 img2d:X
+2 raw 0 122613 1(m7) 4 | raw:122613 delta16:124663 delta32:130728 img2d:X
+3 raw 0 122929 1(m7) 4 | raw:122929 delta16:127068 delta32:133677 img2d:X
+4 raw 0 123545 1(m7) 4 | raw:123545 delta16:128450 delta32:135345 img2d:X
+5 raw 0 123797 1(m7) 4 | raw:123797 delta16:128750 delta32:135550 img2d:X
+6 raw 0 124649 1(m7) 4 | raw:124649 delta16:129390 delta32:136046 img2d:X
+7 raw 0 126767 1(m7) 4 | raw:126767 delta16:131228 delta32:137860 img2d:X
+8 raw 0 129721 1(m7) 4 | raw:129721 delta16:132933 delta32:139739 img2d:X
+9 raw 0 130821 1(m7) 4 | raw:130821 delta16:134291 delta32:141184 img2d:X
+10 raw 0 129624 1(m7) 4 | raw:129624 delta16:133525 delta32:140016 img2d:X
+11 raw 0 130138 1(m7) 4 | raw:130138 delta16:133374 delta32:140014 img2d:X
+12 raw 0 131066 1(m7) 4 | raw:131066 delta16:134075 delta32:140385 img2d:X
+13 raw 0 132098 1(m7) 4 | raw:132098 delta16:135120 delta32:141425 img2d:X
+14 raw 0 135701 1(m7) 4 | raw:135701 delta16:137308 delta32:143576 img2d:X
+15 raw 0 136023 1(m7) 4 | raw:136023 delta16:137180 delta32:143552 img2d:X
+16 raw 0 134846 1(m7) 4 | raw:134846 delta16:135981 delta32:141884 img2d:X
+17 raw 0 137222 1(m7) 4 | raw:137222 delta16:138139 delta32:144633 img2d:X
+18 raw 0 137337 1(m7) 4 | raw:137337 delta16:138398 delta32:144965 img2d:X
+19 raw 0 136402 1(m7) 4 | raw:136402 delta16:137646 delta32:143966 img2d:X
+20 raw 0 134024 1(m7) 4 | raw:134024 delta16:136283 delta32:142673 img2d:X
+21 raw 0 132335 1(m7) 4 | raw:132335 delta16:135416 delta32:141735 img2d:X
+22 raw 0 130537 1(m7) 4 | raw:130537 delta16:134019 delta32:140272 img2d:X
+23 raw 0 129312 1(m7) 4 | raw:129312 delta16:132682 delta32:138736 img2d:X
+24 raw 0 127883 1(m7) 4 | raw:127883 delta16:131261 delta32:137361 img2d:X
+25 raw 0 128113 1(m7) 4 | raw:128113 delta16:130839 delta32:136981 img2d:X
+26 raw 0 127163 1(m7) 4 | raw:127163 delta16:129663 delta32:135596 img2d:X
+27 raw 0 125746 1(m7) 4 | raw:125746 delta16:128659 delta32:134683 img2d:X
+28 raw 0 125804 1(m7) 4 | raw:125804 delta16:128813 delta32:134905 img2d:X
+29 raw 0 125767 1(m7) 4 | raw:125767 delta16:128547 delta32:134441 img2d:X
+30 raw 0 124434 1(m7) 4 | raw:124434 delta16:126695 delta32:132325 img2d:X
+31 raw 0 120575 1(m7) 4 | raw:120575 delta16:122526 delta32:127459 img2d:161521
+32 columnar 2 37818 1(m7) 4 | raw:41286 delta16:40317 xor16:41717 columnar:39797
