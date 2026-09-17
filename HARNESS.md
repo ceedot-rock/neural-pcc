@@ -57,22 +57,47 @@ skips or selects a path. The tiers:
   accumulation until the corpus grows. With 12 files anything trained
   overfits; never build or fit a classifier on it.
 
-## Winner parsing
+## Winner parsing (P1 fix notes — verified against src/main.c + src/workbench.c)
 
 `bench_one.sh` reads the winning outer mode id from **the frame header byte
-itself** (byte 0 of the output file: outer frame = `[mode u8][meta_len u32
-LE][meta][inner blob]`). This is ground truth, independent of stdout. The id
-is mapped via the table in `bench_one.sh`:
+itself** (byte 0 of the output file). This is ground truth, independent of
+stdout. The rule, exactly as the decoder (`wb_decode_frame`,
+`src/workbench.c:1769`) applies it:
 
-  12 raw (candidate-list sentinel, never on the wire) | 13 columnar |
-  14 delta8 | 15 delta16 | 16 delta24 | 17 delta32 | 18 xor16 | 19 xor32 |
-  20 exe | 21 img2d | 22 bitplane | 23 shuffle | 24 routed (SPEC v2)
+- `24` → routed (SPEC v2 frame; outer dispatch at `workbench.c:1901`)
+- `13`–`23` → transform outer frame (`[mode u8][meta_len u32 LE][meta][inner
+  blob]`, inner mode byte at offset `5+meta_len`): 13 columnar, 14 delta8,
+  15 delta16, 16 delta24, 17 delta32, 18 xor16, 19 xor32, 20 exe, 21 img2d,
+  22 bitplane, 23 shuffle
+- anything else → RAW win: the file is a **bare inner frame**, and byte 0
+  is the INNER mode id (0 lz, 1 bwt, 3 xz, 5 col, 6 tr, 7 lzm2, 8 blk).
+  Inner ids are all < 13, so they never collide with the outer range.
+  (Bug #1, fixed 2026-09-16: the old harness expected byte 0 == 12 for a
+  raw win, but 12 is the candidate-list sentinel, never on the wire —
+  every raw win was mis-parsed.)
 
-A mode byte outside 12–24, or a stdout winner that disagrees with the header
-byte, is logged as an INCIDENT. Runner-up margin (loser − winner over the
-two conductor families) is parsed from the conductor's log; if the binary
-does not print both family totals, margin is `?` — adapt the regex to the
-real format before finalizing RESULTS.
+The wbc machine line is the only `^file=` line on stdout
+(`src/main.c:462`):
+`file=IN raw=N packed=M winner=W seats=a>b>c full=0|1 routed=0|1 enc=Ss`.
+The harness cross-checks all three: stdout winner vs header byte vs
+handoff incumbent; any disagreement is an INCIDENT.
+
+Per-candidate exact bytes come ONLY from the escalation handoff export
+(`NPCC_WB_HANDOFF=path`, `src/workbench.c:1506`–`1527`): `incumbent
+bytes=N mode=M param=P` plus `tried mode=M param=P bytes=N`
+(`bytes=X` when the candidate failed/declined). (Bug #2, fixed
+2026-09-16: the old harness parsed per-candidate bytes from stdout, but
+stdout prints no per-candidate totals — the handoff is the only source.
+The harness sets `NPCC_WB_HANDOFF` per run.) Runner-up margin =
+second-smallest tried bytes − smallest tried bytes, from the sorted
+tried table.
+
+(Bug #3, fixed 2026-09-16: the decode step called
+`wbd OUT SRC_PATH DEC`, but `wbd`'s second argument is the original
+size as a decimal byte count (`src/main.c` `cmd_wbd`), not a path —
+every decode failed with `wbd: bad orig`, rc=2. Fixed to
+`wbd "$out" "$raw" "$dec"`. Verified: path form → rc=2, size form →
+rc=0 with SHA-256-identical output.)
 
 ## Audit protocol (deliverable, not a footnote)
 

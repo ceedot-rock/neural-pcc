@@ -19,7 +19,20 @@ mkdir -p "$OUT"
 ts=$(date +%Y%m%d-%H%M%S)
 echo "== bench_wb.sh FULL=$FULL start $ts bin=$BIN out=$OUT" | tee "$OUT/run-$ts.log"
 
-printf '%s\n' $FILES | xargs -P2 -I{} bash "$HERE/bench_one.sh" {} "$BIN" "$OUT" "$FULL"
+# Resume: skip files that already have a non-FAIL result (Bay-1 and FULL=1
+# runs share OUTDIR via the .full suffix, so resume keys off the suffix).
+todo=""
+for f in $FILES; do
+  sfx=""; [ "$FULL" = "1" ] && sfx=".full"
+  r="$OUT/$f$sfx.result"
+  if [ -f "$r" ] && ! grep -qE 'FAIL|MISSING' "$r"; then
+    echo "resume: $f already done ($(cat "$r" | cut -c1-80))" | tee -a "$OUT/run-$ts.log"
+  else
+    todo="$todo $f"
+  fi
+done
+
+printf '%s\n' $todo | xargs -r -P2 -I{} bash "$HERE/bench_one.sh" {} "$BIN" "$OUT" "$FULL"
 
 echo
 echo "== summary =="
