@@ -1,5 +1,5 @@
 # sicknode routing audit v1
-# tag=/home/hatch/workspace/helix-match-exp/corpus/full/sao block_size=262144 nblocks=28
+# tag=sao block_size=262144 nblocks=28
 # per-block: idx mode param probe_bytes tiebreak(m2mode) | cand_mode:bytes,...
 0 raw 0 183204 0(m0) 4 | raw:183204 columnar:194475 bitplane:263378 shuffle:226358
 1 raw 0 182281 0(m0) 4 | raw:182281 columnar:194208 bitplane:263411 shuffle:225666

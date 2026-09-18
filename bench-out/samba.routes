@@ -1,5 +1,5 @@
 # sicknode routing audit v1
-# tag=/home/hatch/workspace/helix-match-exp/corpus/full/samba block_size=262144 nblocks=83
+# tag=samba block_size=262144 nblocks=83
 # per-block: idx mode param probe_bytes tiebreak(m2mode) | cand_mode:bytes,...
 0 raw 0 162461 0(m7) 4 | raw:162461 bitplane:210664 shuffle:184890 delta8:172676
 1 raw 0 64997 0(m7) 4 | raw:64997 bitplane:163985 shuffle:110662 delta8:76729

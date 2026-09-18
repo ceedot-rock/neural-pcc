@@ -1,5 +1,5 @@
 # sicknode routing audit v1
-# tag=/home/hatch/workspace/helix-match-exp/corpus/full/reymont block_size=262144 nblocks=26
+# tag=reymont block_size=262144 nblocks=26
 # per-block: idx mode param probe_bytes tiebreak(m2mode) | cand_mode:bytes,...
 0 raw 0 54053 0(m7) 4 | raw:54053 bitplane:194680 shuffle:124732 delta8:60028
 1 raw 0 54252 0(m7) 4 | raw:54252 bitplane:195082 shuffle:125632 delta8:60061

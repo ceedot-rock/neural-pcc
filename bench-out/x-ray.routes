@@ -1,5 +1,5 @@
 # sicknode routing audit v1
-# tag=/home/hatch/workspace/helix-match-exp/corpus/full/x-ray block_size=262144 nblocks=33
+# tag=x-ray block_size=262144 nblocks=33
 # per-block: idx mode param probe_bytes tiebreak(m2mode) | cand_mode:bytes,...
 0 delta16 0 128185 1(m7) 4 | raw:129806 delta16:129999 delta32:135823 img2d:X
 1 raw 0 118487 1(m7) 4 | raw:118487 delta16:120277 delta32:125918 img2d:X

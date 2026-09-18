@@ -1,5 +1,5 @@
 # sicknode routing audit v1
-# tag=/home/hatch/workspace/helix-match-exp/corpus/full/mr block_size=262144 nblocks=39
+# tag=mr block_size=262144 nblocks=39
 # per-block: idx mode param probe_bytes tiebreak(m2mode) | cand_mode:bytes,...
 0 raw 0 56616 0(m7) 4 | raw:56616 columnar:76130 bitplane:68568 shuffle:64593
 1 delta16 0 62437 1(m7) 4 | raw:62441 delta16:62437 img2d:63253 xor16:69314
