@@ -336,7 +336,7 @@ static void usage(void) {
             "  xz-9       — xz at maximum compression (common strong baseline)\n"
             "\n"
             "Claim lock (honesty):\n"
-            "  Silesia packed 48.54M (48,541,366) / beats xz-9 / DECODE_OK.\n"
+            "  Silesia packed 43,724,575 / DECODE_OK 12/12 (decode + SHA-256 verified 2026-09-18).\n"
             "  Never #1, never OSCB, never Fast MB/s. Compressor 2 only.\n"
             "\n"
             "License: AGPL-3.0-or-later OR commercial (see LICENSE / COMMERCIAL.md).\n",

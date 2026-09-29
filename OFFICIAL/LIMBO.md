@@ -3,7 +3,7 @@
 Working name for the compressor **when compression is at optimal / nominal
 level** — not a rename of TNSSRC 0.1.0.
 
-TNSSRC 0.1.0 (Silesia 12/12 DECODE_OK **48,541,366**, beats xz-9, not #1)
+TNSSRC 0.1.0 (Silesia 12/12 DECODE_OK **43,724,575**, not #1)
 stays TNSSRC until that bar is hit.
 
 Do not put Limbo on Matt’s table, GitHub title, or OSCB until Corey says

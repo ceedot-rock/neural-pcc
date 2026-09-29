@@ -38,7 +38,9 @@ uninstall:
 	rm -f $(DESTDIR)$(PREFIX)/bin/npcc
 
 bench-xml: $(BIN)
-	$(BIN) bench /home/ceedotrock/data/silesia/xml classical
+	$(BIN) bench $(SILESIA_XML_DIR) classical
+# Set SILESIA_XML_DIR to your local Silesia xml corpus, e.g.
+#   make bench-xml SILESIA_XML_DIR=/path/to/silesia/xml
 
 clean:
 	rm -f bin/npcc src/*.o tests/test_npcc tests/test_riser tests/test_lzm2
