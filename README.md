@@ -1,5 +1,8 @@
 # TNSSRC (Neural-PCC)
 
+[![Audited checks](https://github.com/ceedot-rock/neural-pcc/actions/workflows/audited-checks.yml/badge.svg)](https://github.com/ceedot-rock/neural-pcc/actions/workflows/audited-checks.yml)
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
+
 **License:** AGPL-3.0-or-later **or** a written commercial grant ([LICENSE](LICENSE), [COMMERCIAL.md](COMMERCIAL.md)). Visibility is not a grant to ship TNSSRC in a closed product.
 
 **Compressor 2.** PCC is compressor 1. TriNeural Shared Spine Row Compression. Own C. Not host xz/gzip/bzip2. Separate from Dial A / PCC daily.
