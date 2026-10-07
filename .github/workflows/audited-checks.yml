@@ -1,0 +1,60 @@
+name: Audited checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  c-tests:
+    name: C tests (make test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build deps
+        run: sudo apt-get update -y && sudo apt-get install -y build-essential zlib1g-dev
+      - name: Build and run C tests
+        run: make test
+
+  py-roundtrip:
+    name: Python compress/decompress roundtrip
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Roundtrip every sample
+        run: python3 tests/test_npcc.py
+
+  api:
+    name: API smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Boot server and exercise endpoints
+        run: |
+          python3 -m npcc serve 127.0.0.1 8080 &
+          for i in $(seq 1 20); do curl -sf localhost:8080/health && break; sleep 1; done
+          curl -sf localhost:8080/service | grep -q '"service": "neural-pcc"'
+          curl -sf localhost:8080/service | grep -q '"version": "0.1.0"'
+          curl -sf localhost:8080/about | grep -q '"repository"'
+          curl -sf localhost:8080/endpoints | grep -q '"/api/compress"'
+          head -c 100000 /dev/urandom > /tmp/npcc-in.bin
+          sha256sum /tmp/npcc-in.bin | cut -d' ' -f1 > /tmp/npcc-in.sha
+          curl -sf -X POST localhost:8080/api/compress \
+            -H 'content-type: application/octet-stream' \
+            --data-binary @/tmp/npcc-in.bin -o /tmp/npcc-out.npcc
+          curl -sf -X POST localhost:8080/api/decompress \
+            -H 'content-type: application/octet-stream' \
+            --data-binary @/tmp/npcc-out.npcc -o /tmp/npcc-back.bin
+          echo "$(cat /tmp/npcc-in.sha)  /tmp/npcc-back.bin" | sha256sum -c
+          # never-expand law: compressed blob must not exceed input
+          test $(stat -c%s /tmp/npcc-out.npcc) -le $(stat -c%s /tmp/npcc-in.bin)
